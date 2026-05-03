@@ -5,8 +5,8 @@ import plotly.express as px
 import re
 from datetime import datetime
 
-st.set_page_config(page_title="交易戰情室 3.1", layout="wide")
-st.title("🎯 交易戰情室 3.1 (強效淨化版)")
+st.set_page_config(page_title="交易戰情室 3.2", layout="wide")
+st.title("🎯 交易戰情室 3.2 (終極數據精準版)")
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
@@ -58,8 +58,9 @@ with st.sidebar:
                             else:
                                 obs_part = full_content.split("：", 1)[-1].strip() if "：" in full_content else full_content
 
-                            change_match = re.search(r'\(([+-]?[\d\.]+)\%\)', rec_part if rec_part else full_content)
-                            change = float(change_match.group(1)) if change_match else 0
+                            # 【關鍵升級】：全新數字雷達，無視括號種類與多餘文字，直接精準抓取 % 前的數字
+                            change_match = re.search(r'([+-]?\d+(?:\.\d+)?)\s*%', rec_part if rec_part else full_content)
+                            change = float(change_match.group(1)) if change_match else 0.0
                             
                             is_buy = "✅" in header or "買" in full_content
                             
@@ -89,19 +90,19 @@ with st.sidebar:
 try:
     df = conn.read(ttl=0).dropna(subset=['標的'])
     
-    # 【關鍵強效淨化區】：無論試算表多亂，在顯示前強制清洗
+    # 標的淨化
     df['標的'] = df['標的'].astype(str)
-    # 1. 強制剃除所有數字，解決「國巨2327」的問題
     df['標的'] = df['標的'].str.replace(r'\d+', '', regex=True).str.strip()
-    # 2. 強制過濾掉異常長度的句子，字數大於 6 的直接隱藏
     df = df[df['標的'].str.len() <= 6]
     df = df[df['標的'].str.len() > 0]
     
-    df['漲跌%'] = pd.to_numeric(df['漲跌%'], errors='coerce').fillna(0)
+    df['漲跌%'] = pd.to_numeric(df['漲跌%'], errors='coerce').fillna(0.0)
     
     if not df.empty:
-        win_rate = (len(df[df['漲跌%'] > 0]) / len(df) * 100)
-        st.metric("📊 歷史預判總勝率", f"{win_rate:.1f}%")
+        # 計算勝率 (僅計算有操作且漲跌不為0的標的)
+        buy_df = df[df['操作'] == '買進']
+        win_rate = (len(buy_df[buy_df['漲跌%'] > 0]) / len(buy_df) * 100) if len(buy_df) > 0 else 0
+        st.metric("📊 實際買進預判勝率", f"{win_rate:.1f}%")
         
         df['類別'] = df['漲跌%'].apply(lambda x: '獲利' if x > 0 else ('虧損' if x < 0 else '持平'))
         fig = px.pie(df, names='類別', hole=0.4, color='類別', 
