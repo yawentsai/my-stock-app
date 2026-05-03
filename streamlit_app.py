@@ -6,8 +6,8 @@ import re
 from datetime import datetime
 
 # 頁面基本設定
-st.set_page_config(page_title="標的追蹤戰情室 2.2", layout="wide")
-st.title("🎯 個股追蹤戰情室 2.2")
+st.set_page_config(page_title="標的追蹤戰情室 2.3", layout="wide")
+st.title("🎯 個股追蹤戰情室 2.3")
 
 # 建立資料庫連線
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -20,15 +20,19 @@ with st.sidebar:
     if st.button("🚀 解析並同步"):
         if user_input:
             try:
+                # 1. 抓取標的名稱
                 target_match = re.search(r'[✅| ](.*?)[：|:]', user_input)
-                target = target_match.group(1).strip() if target_match else "未知標的"
+                target_raw = target_match.group(1).strip() if target_match else "未知標的"
+                # 2. 自動清理：移除數字代號，只保留中文名稱
+                target_clean = re.sub(r'\d+', '', target_raw).strip()
+                
                 change_match = re.search(r'\(.*?[+-](.*?)\%\)', user_input)
                 change = float(change_match.group(1)) if change_match else 0
                 if "-" in user_input and "(+" not in user_input: change = -abs(change)
                 
                 new_row = pd.DataFrame([{
                     "日期": datetime.now().strftime("%m/%d"),
-                    "標的": target,
+                    "標的": target_clean,
                     "操作": "買進" if "買" in user_input else ("觀察" if "觀察" in user_input else "紀錄"),
                     "漲跌%": change,
                     "盤後紀錄": user_input.replace('\n', ' ')
@@ -37,7 +41,7 @@ with st.sidebar:
                 existing_df = conn.read()
                 updated_df = pd.concat([existing_df, new_row], ignore_index=True)
                 conn.update(data=updated_df)
-                st.success(f"🎉 {target} 已加入追蹤清單！")
+                st.success(f"🎉 {target_clean} 已歸位！")
                 st.rerun()
             except:
                 st.error("格式解析錯誤。")
@@ -47,9 +51,12 @@ try:
     df = conn.read().dropna(subset=['標的'])
     df['漲跌%'] = pd.to_numeric(df['漲跌%'], errors='coerce').fillna(0)
     
+    # 【關鍵升級】：在此統一清理歷史資料中的數字代號，確保歸類一致
+    df['清理名稱'] = df['標的'].str.replace(r'\d+', '', regex=True).str.strip()
+    
     # 1. 核心看板
     m1, m2 = st.columns(2)
-    m1.metric("監控中標的數", f"{df['標的'].nunique()} 檔")
+    m1.metric("監控中標的數", f"{df['清理名稱'].nunique()} 檔")
     win_rate = (len(df[df['漲跌%'] > 0]) / len(df) * 100) if len(df) > 0 else 0
     m2.metric("歷史預判勝率", f"{win_rate:.1f}%")
 
@@ -64,20 +71,18 @@ try:
 
     st.divider()
 
-    # 3. 按標的歸納的清單
-    st.subheader("🔍 個股追蹤歷程")
+    # 3. 按清理後的名稱歸納
+    st.subheader("🔍 個股追蹤歷程 (已自動合併代號)")
     
-    # 取得所有唯一標的，並按字母/筆畫排序
-    unique_targets = sorted(df['標的'].unique())
+    unique_targets = sorted(df['清理名稱'].unique())
     
-    for target in unique_targets:
-        # 篩選該標的的所有紀錄
-        target_df = df[df['標的'] == target].sort_values(by='日期', ascending=False)
+    for target_name in unique_targets:
+        # 篩選該清理名稱下的所有紀錄
+        target_df = df[df['清理名稱'] == target_name].sort_values(by='日期', ascending=False)
         last_change = target_df.iloc[0]['漲跌%']
         status_color = "#ef5350" if last_change > 0 else ("#26a69a" if last_change < 0 else "#bdbdbd")
         
-        # 顯示標的小卡片
-        with st.expander(f"📌 {target} (共 {len(target_df)} 筆紀錄 | 最新：{last_change}%)"):
+        with st.expander(f"📌 {target_name} (共 {len(target_df)} 筆紀錄 | 最新：{last_change}%)"):
             for _, row in target_df.iterrows():
                 st.markdown(f"""
                     <div style="padding:10px; margin-bottom:5px; background:#f8f9fa; border-radius:5px; border-left: 3px solid {status_color};">
@@ -88,4 +93,4 @@ try:
                 """, unsafe_allow_html=True)
 
 except:
-    st.info("系統就緒中...")
+    st.info("系統讀取中...")
