@@ -9,11 +9,10 @@ import requests
 from bs4 import BeautifulSoup
 import urllib.parse
 
-# 1. 基礎設定
+# 1. 基礎設定與手機版網格鎖定
 st.set_page_config(page_title="零股追蹤神器", layout="wide")
 st.title("🚀 零股追蹤神器")
 
-# ⚡ 強制鎖定行動端樣式
 st.markdown("""
     <style>
     .dashboard-grid {
@@ -37,7 +36,6 @@ st.markdown("""
         border-radius: 8px !important;
         margin-bottom: 12px !important;
     }
-    /* 獲利通知欄位美化 */
     .status-box {
         padding: 12px;
         border-radius: 8px;
@@ -50,7 +48,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # 2. 自動刷新 (60秒)
-st_autorefresh(interval=60000, limit=1000, key="global_v85_sync")
+st_autorefresh(interval=60000, limit=1000, key="global_v86_final")
 
 INITIAL_CAPITAL = 100000
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -90,7 +88,7 @@ except:
 for col in ['成本', '股數', '投入金額', '賣出價', '實現損益', '漲跌%']:
     existing_df[col] = pd.to_numeric(existing_df[col], errors='coerce').fillna(0.0)
 
-# --- 側邊欄：功能全對稱 ---
+# --- 側邊欄：功能全開 ---
 with st.sidebar:
     st.header("⚡ 系統控制區")
     
@@ -153,7 +151,6 @@ with st.sidebar:
                         existing_df.at[idx, '賣出價'], existing_df.at[idx, '實現損益'] = sr_p, (sr_p - cp) * q_orig
                         existing_df.at[idx, '漲跌%'], existing_df.at[idx, '盤後紀錄'] = ((sr_p - cp)/cp)*100, f"清倉：{sr_n}"
                     conn.update(data=existing_df); st.cache_data.clear(); st.rerun()
-        else: st.info("目前無在庫持倉。")
 
     st.divider()
 
@@ -185,23 +182,23 @@ try:
         p_twd = (cp - row['成本']) * row['股數'] if cp else 0.0
         total_unrealized += p_twd
         active_holdings.append({'日期': row['日期'], '標的': row['標的'], '代號': row['代號'], '均價': row['成本'], '股數': row['股數'], '現價': cp if cp else "...", '損益金額': p_twd, '損益率%': p_pct})
-        if p_pct >= 10: ready_to_sell.append(f"{row['標的']} (+{p_pct:.2f}%)")
+        # 💡 更新：獲利達 2.00% 即通知
+        if p_pct >= 2.0: ready_to_sell.append(f"{row['標的']} (+{p_pct:.2f}%)")
     
     total_profit = total_realized + total_unrealized
     equity = INITIAL_CAPITAL + total_profit; used_cap = active_df['投入金額'].sum(); rem_cap = (INITIAL_CAPITAL + total_realized) - used_cap
 
-    # 1. 核心看板 (鎖定3欄)
+    # 1. 看板 (3欄鎖定)
     st.markdown("### 🏦 真實資產結算看板")
     p_c = "#1b5e20" if total_profit >= 0 else "#b71c1c"; p_b = "#e8f5e9" if total_profit >= 0 else "#ffebee"
     st.markdown(f"""<div class="dashboard-grid"><div class="metric-card"><div class="metric-label">總資產權益</div><div class="metric-value">${equity:,.0f}</div></div><div class="metric-card" style="background:{p_b}; border-color:{p_c}22;"><div class="metric-label" style="color:{p_c};">🎯 累計獲利</div><div class="metric-value" style="color:{p_c};">${total_profit:,.0f}</div></div><div class="metric-card"><div class="metric-label">📈 ROI</div><div class="metric-value">{(total_profit/INITIAL_CAPITAL)*100:.2f}%</div></div><div class="metric-card" style="background:#fff3e0;"><div class="metric-label" style="color:#e65100;">已投入資金</div><div class="metric-value" style="color:#e65100;">${used_cap:,.0f}</div></div><div class="metric-card"><div class="metric-label">可用現金</div><div class="metric-value">${rem_cap:,.0f}</div></div><div class="metric-card"><div class="metric-label">利用率</div><div class="metric-value">{(used_cap/(INITIAL_CAPITAL+total_realized))*100:.1f}%</div></div></div>""", unsafe_allow_html=True)
 
-    # 💡 補回獲利通知：標達標就亮紅，沒標就亮綠
+    # 💡 獲利狀態通知：下修至 2%
     if ready_to_sell:
-        st.markdown(f"""<div class="status-box" style="background-color:#ffebee; color:#b71c1c; border:2px solid #ef5350;">🚨 停利標準已達標 ({len(ready_to_sell)} 檔)：{', '.join(ready_to_sell)}</div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div class="status-box" style="background-color:#ffebee; color:#b71c1c; border:2px solid #ef5350;">🚨 停利標準已達標 (2%↑)：{', '.join(ready_to_sell)}</div>""", unsafe_allow_html=True)
     else:
-        st.markdown("""<div class="status-box" style="background-color:#e8f5e9; color:#2e7d32; border:1px dashed #4caf50;">✅ 目前持股獲利尚未達 10% 停利標準，請繼續耐心持有。</div>""", unsafe_allow_html=True)
+        st.markdown("""<div class="status-box" style="background-color:#e8f5e9; color:#2e7d32; border:1px dashed #4caf50;">✅ 目前持股獲利尚未達 2% 停利標準，請繼續耐心持有。</div>""", unsafe_allow_html=True)
 
-    # 3. 頁籤功能
     t1, t2, t3, t4 = st.tabs(["💼 實單持股", "📰 即時新聞區", "📅 歷史日誌 (統整)", "🗂️ 個股深度追蹤"])
     
     with t1:
@@ -236,7 +233,7 @@ try:
                         c = "#ef5350" if row['漲跌%'] > 0 else ("#26a69a" if row['漲跌%'] < 0 else "#bdbdbd")
                         st.markdown(f"<div style='border-left:5px solid {c}; padding:10px; background:#f8f9fa; margin-bottom:10px; border-radius:4px;'><b>{row['日期']} | <span style='color:{c};'>{row['漲跌%']:.2f}%</span></b><br><small>🔍 {row['盤前觀察']}</small><br><small>📝 {row['盤後紀錄']}</small></div>", unsafe_allow_html=True)
 
-    # 4. 底部勝率與圓餅圖
+    # 4. 底部圖表
     st.divider()
     c_buy = completed[completed['操作'] == '買進']
     w_r = (len(c_buy[c_buy['漲跌%'] > 0]) / len(c_buy) * 100) if not c_buy.empty else 0.0
