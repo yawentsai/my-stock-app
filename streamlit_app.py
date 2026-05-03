@@ -8,6 +8,7 @@ from streamlit_autorefresh import st_autorefresh
 import requests
 from bs4 import BeautifulSoup
 import urllib.parse
+import re  # ❗ 新增：正規表達式模組，用來自動抓取 1. 2. 3. 進行排版
 
 # 1. 基礎設定與手機版網格鎖定
 st.set_page_config(page_title="零股追蹤神器", layout="wide")
@@ -46,6 +47,16 @@ st.markdown("""
     }
     </style>
 """, unsafe_allow_html=True)
+
+# --- 輔助排版函數：自動產生條列式切齊 ---
+def format_list_text(text):
+    if not isinstance(text, str) or not text.strip(): return ""
+    # 先將手動換行轉為 HTML 換行
+    text = text.replace('\n', '<br>')
+    # 自動偵測 "數字. " 並在前面加上換行 (避開已經換行的部分)
+    text = re.sub(r'(?<!^)(?<!<br>)\s*(\b\d+\.\s*)', r'<br>\1', text)
+    # 套用懸掛縮排 (Hanging Indent)，讓多行文字完美切齊數字右側
+    return f'<div style="padding-left: 1.4em; text-indent: -1.4em; margin-top: 4px;">{text}</div>'
 
 # --- LINE 通知核心函數 ---
 def send_line_message(message):
@@ -111,7 +122,6 @@ for col in ['成本', '股數', '投入金額', '賣出價', '實現損益', '�
 with st.sidebar:
     st.header("⚡ 系統控制區")
     
-    # LINE 通知測試按鈕
     st.subheader("🔔 通知測試")
     if st.button("發送 LINE 測試通知"):
         if send_line_message("✅ 零股追蹤神器：連線測試成功！"):
@@ -210,18 +220,15 @@ try:
         p_twd = (cp - row['成本']) * row['股數'] if cp else 0.0
         total_unrealized += p_twd
         active_holdings.append({'日期': row['日期'], '標的': row['標的'], '代號': row['代號'], '均價': row['成本'], '股數': row['股數'], '現價': cp if cp else "...", '損益金額': p_twd, '損益率%': p_pct})
-        # 💡 通知邏輯：獲利達 2.00%
         if p_pct >= 2.0: ready_to_sell.append(f"{row['標的']} (+{p_pct:.2f}%)")
     
     total_profit = total_realized + total_unrealized
     equity = INITIAL_CAPITAL + total_profit; used_cap = active_df['投入金額'].sum(); rem_cap = (INITIAL_CAPITAL + total_realized) - used_cap
 
-    # 1. 看板
     st.markdown("### 🏦 真實資產結算看板")
     p_c = "#1b5e20" if total_profit >= 0 else "#b71c1c"; p_b = "#e8f5e9" if total_profit >= 0 else "#ffebee"
     st.markdown(f"""<div class="dashboard-grid"><div class="metric-card"><div class="metric-label">總資產權益</div><div class="metric-value">${equity:,.0f}</div></div><div class="metric-card" style="background:{p_b}; border-color:{p_c}22;"><div class="metric-label" style="color:{p_c};">🎯 累計獲利</div><div class="metric-value" style="color:{p_c};">${total_profit:,.0f}</div></div><div class="metric-card"><div class="metric-label">📈 ROI</div><div class="metric-value">{(total_profit/INITIAL_CAPITAL)*100:.2f}%</div></div><div class="metric-card" style="background:#fff3e0;"><div class="metric-label" style="color:#e65100;">已投入資金</div><div class="metric-value" style="color:#e65100;">${used_cap:,.0f}</div></div><div class="metric-card"><div class="metric-label">可用現金</div><div class="metric-value">${rem_cap:,.0f}</div></div><div class="metric-card"><div class="metric-label">利用率</div><div class="metric-value">{(used_cap/(INITIAL_CAPITAL+total_realized))*100:.1f}%</div></div></div>""", unsafe_allow_html=True)
 
-    # 🚦 獲利狀態通知
     if ready_to_sell:
         status_msg = f"🚨 停利標準已達標 (2%↑)：{', '.join(ready_to_sell)}"
         st.markdown(f"""<div class="status-box" style="background-color:#ffebee; color:#b71c1c; border:2px solid #ef5350;">{status_msg}</div>""", unsafe_allow_html=True)
@@ -242,7 +249,6 @@ try:
                 for n in fetch_stock_news(s):
                     st.markdown(f"<div style='padding:8px; border-bottom:1px solid #eee;'><a href='{n['連結']}' target='_blank' style='text-decoration:none; color:#1e88e5; font-weight:bold;'>{n['標題']}</a><br><small style='color:gray;'>{n['來源']} | {n['發布']}</small></div>", unsafe_allow_html=True)
 
-    # ❗ 修正：將 "⏳ 等待更新..." 從排除名單中拿掉，讓盤前計畫能順利顯示在歷史日誌中
     completed = df[~df['盤後紀錄'].isin(["實單持倉中", "僅新聞追蹤"])].copy()
     
     with t3:
@@ -252,7 +258,25 @@ try:
                     for _, r in completed[completed['日期'] == d].iterrows():
                         res_c = "#ef5350" if r['漲跌%'] > 0 else ("#26a69a" if r['漲跌%'] < 0 else "gray")
                         bg = "#ef5350" if "買進" in r['操作'] else "#bdbdbd"
-                        st.markdown(f"""<div style="border-left:6px solid {res_c}; padding:15px; background:white; margin-bottom:12px; border-radius:8px; border: 1px solid #eee;"><div style="display:flex; justify-content:space-between; margin-bottom:8px;"><span style='background-color:{bg}; color:white; padding:2px 8px; border-radius:4px; font-size:0.8rem;'>{r['操作']}</span><strong>{r['標的']}</strong><span style="color:{res_c}; font-weight:bold;">{r['漲跌%']:.2f}%</span></div><div style="background:#f8f9fa; padding:8px; border-radius:6px; margin-bottom:5px; font-size:0.9rem;">🔍 盤前：{r['盤前觀察']}</div><div style="background:#fff; padding:8px; border-radius:6px; border:1px dashed #ddd; font-size:0.9rem;">📝 盤後：{r['盤後紀錄']}</div></div>""", unsafe_allow_html=True)
+                        
+                        pre_text = format_list_text(r['盤前觀察'])
+                        post_text = format_list_text(r['盤後紀錄'])
+                        
+                        st.markdown(f"""
+                        <div style="border-left:6px solid {res_c}; padding:15px; background:white; margin-bottom:12px; border-radius:8px; border: 1px solid #eee;">
+                            <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                                <span style='background-color:{bg}; color:white; padding:2px 8px; border-radius:4px; font-size:0.8rem;'>{r['操作']}</span>
+                                <strong>{r['標的']}</strong>
+                                <span style="color:{res_c}; font-weight:bold;">{r['漲跌%']:.2f}%</span>
+                            </div>
+                            <div style="background:#f8f9fa; padding:10px; border-radius:6px; margin-bottom:5px; font-size:0.95rem; text-align: justify; line-height: 1.6;">
+                                🔍 <b>盤前：</b>{pre_text}
+                            </div>
+                            <div style="background:#fff; padding:10px; border-radius:6px; border:1px dashed #ddd; font-size:0.95rem; text-align: justify; line-height: 1.6;">
+                                📝 <b>盤後：</b>{post_text}
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
 
     with t4:
         if not completed.empty:
@@ -261,9 +285,22 @@ try:
                 with st.expander(f"📌 {t} (紀錄：{len(t_df)} 筆)"):
                     for _, row in t_df.iterrows():
                         c = "#ef5350" if row['漲跌%'] > 0 else ("#26a69a" if row['漲跌%'] < 0 else "#bdbdbd")
-                        st.markdown(f"<div style='border-left:5px solid {c}; padding:10px; background:#f8f9fa; margin-bottom:10px; border-radius:4px;'><b>{row['日期']} | <span style='color:{c};'>{row['漲跌%']:.2f}%</span></b><br><small>🔍 {row['盤前觀察']}</small><br><small>📝 {row['盤後紀錄']}</small></div>", unsafe_allow_html=True)
+                        
+                        pre_text = format_list_text(row['盤前觀察'])
+                        post_text = format_list_text(row['盤後紀錄'])
+                        
+                        st.markdown(f"""
+                        <div style='border-left:5px solid {c}; padding:10px; background:#f8f9fa; margin-bottom:10px; border-radius:4px;'>
+                            <b>{row['日期']} | <span style='color:{c};'>{row['漲跌%']:.2f}%</span></b>
+                            <div style='margin-top:5px; font-size:0.9rem; text-align: justify; line-height: 1.6; color:#444;'>
+                                🔍 <b>盤前：</b>{pre_text}
+                            </div>
+                            <div style='margin-top:5px; font-size:0.9rem; text-align: justify; line-height: 1.6; color:#444;'>
+                                📝 <b>盤後：</b>{post_text}
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
 
-    # 4. 底部圖表
     st.divider()
     c_buy = completed[completed['操作'] == '買進']
     w_r = (len(c_buy[c_buy['漲跌%'] > 0]) / len(c_buy) * 100) if not c_buy.empty else 0.0
