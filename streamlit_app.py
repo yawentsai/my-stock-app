@@ -242,7 +242,8 @@ try:
                 for n in fetch_stock_news(s):
                     st.markdown(f"<div style='padding:8px; border-bottom:1px solid #eee;'><a href='{n['連結']}' target='_blank' style='text-decoration:none; color:#1e88e5; font-weight:bold;'>{n['標題']}</a><br><small style='color:gray;'>{n['來源']} | {n['發布']}</small></div>", unsafe_allow_html=True)
 
-    completed = df[~df['盤後紀錄'].isin(["實單持倉中", "⏳ 等待更新...", "僅新聞追蹤"])].copy()
+    # ❗ 修正：將 "⏳ 等待更新..." 從排除名單中拿掉，讓盤前計畫能順利顯示在歷史日誌中
+    completed = df[~df['盤後紀錄'].isin(["實單持倉中", "僅新聞追蹤"])].copy()
     
     with t3:
         if not completed.empty:
