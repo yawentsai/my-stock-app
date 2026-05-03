@@ -5,8 +5,8 @@ import plotly.express as px
 from datetime import datetime
 import yfinance as yf
 
-st.set_page_config(page_title="交易戰情室 4.9", layout="wide")
-st.title("🎯 交易戰情室 4.9 (終極財務報表版)")
+st.set_page_config(page_title="交易戰情室 5.0", layout="wide")
+st.title("🎯 交易戰情室 5.0 (持股明細版)")
 
 # 💡 初始本金設定
 INITIAL_CAPITAL = 100000
@@ -185,12 +185,10 @@ try:
         # ==========================================
         # 模塊 1：💰 總資產與財務報表監控
         # ==========================================
-        # 1. 提取已實現與準備數據
         total_realized_pnl = df['實現損益'].sum()
         active_df = df[(df['操作'] == '買進') & (df['盤後紀錄'] == '實單持倉中')]
         used_capital = active_df['投入金額'].sum() if not active_df.empty else 0
         
-        # 2. 計算即時未實現損益
         total_unrealized_pnl = 0
         active_holdings_data = []
         ready_to_sell = []
@@ -202,39 +200,32 @@ try:
                 p_twd = (curr_p - row['成本']) * row['股數']
                 total_unrealized_pnl += p_twd
                 active_holdings_data.append({
-                    '標的': row['標的'], '代號': row['代號'], '成本': row['成本'], 
+                    '日期': row['日期'], '標的': row['標的'], '代號': row['代號'], 
+                    '成本': row['成本'], '股數': row['股數'], '投入金額': row['投入金額'],
                     '現價': curr_p, '漲跌%': p_pct, '損益TWD': p_twd
                 })
                 if p_pct >= 10:
                     ready_to_sell.append(f"{row['標的']} (+{p_pct:.1f}%)")
                     
-        # 3. 結算總財務數據
         total_profit = total_realized_pnl + total_unrealized_pnl
         current_total_equity = INITIAL_CAPITAL + total_profit
         cash_pool = INITIAL_CAPITAL + total_realized_pnl
         rem_capital = cash_pool - used_capital
         utilization_rate = (used_capital / cash_pool) * 100 if cash_pool > 0 else 0
 
-        # --- 全新 2x3 財務報表排版 ---
         st.markdown("### 🏦 真實資產結算看板")
-        
-        # 上層：績效表現
         c1, c2, c3 = st.columns(3)
         c1.metric("總資產權益 (含未實現)", f"${current_total_equity:,.0f}")
         c2.metric("🎯 累計總獲利 (金額)", f"${total_profit:,.0f}", f"已結算: ${total_realized_pnl:,.0f} | 帳面: ${total_unrealized_pnl:,.0f}")
         c3.metric("📈 總報酬率 (ROI)", f"{(total_profit/INITIAL_CAPITAL)*100:.2f}%")
         
-        st.write("") # 間距
-        
-        # 下層：資金控管
+        st.write("") 
         c4, c5, c6 = st.columns(3)
         c4.metric("已投入資金 (持倉成本)", f"${used_capital:,.0f}")
         c5.metric("剩餘可用現金", f"${rem_capital:,.0f}")
         c6.metric("本金利用率", f"{utilization_rate:.1f}%")
 
         st.write("") 
-        
-        # --- 停利目標監控區 ---
         if not active_df.empty:
             if ready_to_sell:
                 st.markdown(f"""
@@ -285,7 +276,9 @@ try:
                 st.plotly_chart(fig, use_container_width=True)
 
         st.write("") 
-        tab1, tab2 = st.tabs(["🗂️ 依【個股】深度追蹤", "📅 依【日期】盤後日誌"])
+        # --- 全新加入：三頁籤設計 ---
+        tab1, tab2, tab3 = st.tabs(["🗂️ 依【個股】深度追蹤", "📅 依【日期】盤後日誌", "💼 實單持股明細"])
+        
         with tab1:
             for target in sorted(df['標的'].unique()):
                 t_df = df[df['標的'] == target].sort_values(by='日期', ascending=False)
@@ -325,6 +318,21 @@ try:
                                 <span style="color:#666; font-size:0.85rem;">📝 {row['盤後紀錄']}</span>
                             </div>
                             """, unsafe_allow_html=True)
+                            
+        # --- 全新第三頁籤內容 ---
+        with tab3:
+            st.markdown("#### 💼 實單持股庫存明細")
+            if active_holdings_data:
+                # 建立要顯示的 DataFrame，並將欄位名稱改得更符合財務邏輯
+                holdings_df = pd.DataFrame(active_holdings_data)
+                display_df = holdings_df[['日期', '標的', '代號', '股數', '成本', '現價', '投入金額', '損益TWD']].copy()
+                display_df.columns = ['買進日期', '標的名稱', '股票代號', '持有股數', '平均成本', '即時現價', '投入本金', '目前損益']
+                
+                # 在 Streamlit 中完美呈現表格
+                st.dataframe(display_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("目前無正在持有的實單紀錄。")
+                
     else:
         st.info("資料庫目前為空。")
 except Exception as e:
