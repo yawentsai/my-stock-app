@@ -5,8 +5,8 @@ import plotly.express as px
 from datetime import datetime, date
 import yfinance as yf
 
-st.set_page_config(page_title="交易戰情室 5.5", layout="wide")
-st.title("🎯 交易戰情室 5.5 (穩定監控版)")
+st.set_page_config(page_title="交易戰情室 5.6", layout="wide")
+st.title("🎯 交易戰情室 5.6 (大字戰情看板版)")
 
 # 💡 初始本金設定
 INITIAL_CAPITAL = 100000
@@ -52,8 +52,8 @@ with st.sidebar:
             st.caption("輸入現有持股時，請填寫『平均成本』")
             init_date = st.date_input("買進日期", value=date.today())
             col1, col2 = st.columns(2)
-            with col1: buy_name = st.text_input("名稱 (如: 雍智科技)")
-            with col2: buy_symbol = st.text_input("代號 (如: 6683)")
+            with col1: buy_name = st.text_input("名稱")
+            with col2: buy_symbol = st.text_input("代號")
             buy_price = st.number_input("買入均價*", min_value=0.0, step=0.1)
             buy_qty = st.number_input("持有股數*", min_value=0, step=1, value=100)
             buy_obs = st.text_area("進場備註")
@@ -80,7 +80,6 @@ with st.sidebar:
                 selected_sell = st.selectbox("選擇要賣出的持倉", options)
                 sell_price = st.number_input("賣出單價*", min_value=0.0, step=0.1)
                 sell_note = st.text_input("出場檢討")
-                
                 if st.form_submit_button("💰 確認賣出"):
                     sel_date, sel_name_cost = selected_sell.split(" - ", 1)
                     sel_name = sel_name_cost.split(" (")[0]
@@ -92,34 +91,6 @@ with st.sidebar:
                     existing_df.at[idx, '實現損益'] = float(realized)
                     existing_df.at[idx, '漲跌%'] = ((sell_price - cost_p) / cost_p) * 100
                     existing_df.at[idx, '盤後紀錄'] = f"已出場 ({sell_note})" if sell_note else "已出場"
-                    conn.update(data=existing_df)
-                    st.cache_data.clear()
-                    st.rerun()
-
-    st.divider()
-    st.header("📝 訓練預判區")
-    with st.expander("🌅 Step 1: 盤前"):
-        with st.form("pre_form", clear_on_submit=True):
-            p_date = st.text_input("日期", value=date.today().strftime("%m/%d"))
-            p_name = st.text_input("標的名稱*")
-            p_pre = st.text_area("觀察重點")
-            if st.form_submit_button("🚀 送出"):
-                new_log = pd.DataFrame([{"日期": p_date, "標的": p_name, "代號":"", "操作":"觀察", "成本":0, "股數":0, "投入金額":0, "漲跌%":0, "盤前觀察":p_pre, "盤後紀錄":"⏳ 等待更新..."}])
-                conn.update(data=pd.concat([existing_df, new_log], ignore_index=True))
-                st.cache_data.clear()
-                st.rerun()
-
-    with st.expander("🌇 Step 2: 盤後"):
-        pending = existing_df[existing_df['盤後紀錄'] == "⏳ 等待更新..."]
-        if not pending.empty:
-            with st.form("post_form", clear_on_submit=True):
-                sel = st.selectbox("標的", pending.apply(lambda x: f"{x['日期']} - {x['標的']}", axis=1))
-                p_post = st.text_area("回饋")
-                p_pct = st.number_input("漲跌%", step=0.1)
-                if st.form_submit_button("💾 儲存"):
-                    sd, sn = sel.split(" - ", 1)
-                    idx = existing_df[(existing_df['日期']==sd) & (existing_df['標的']==sn)].index[0]
-                    existing_df.at[idx, '盤後紀錄'], existing_df.at[idx, '漲跌%'] = p_post, float(p_pct)
                     conn.update(data=existing_df); st.cache_data.clear(); st.rerun()
 
 # --- 主畫面顯示 ---
@@ -138,7 +109,6 @@ try:
     
     for i, (idx, row) in enumerate(active_df.iterrows()):
         curr_p = get_live_price(row['代號'])
-        # 💡 [修正]：即使沒抓到現價，也要顯示在明細中
         p_pct = ((curr_p - row['成本']) / row['成本']) * 100 if curr_p else 0.0
         p_twd = (curr_p - row['成本']) * row['股數'] if curr_p else 0.0
         total_unrealized_pnl += p_twd
@@ -156,27 +126,38 @@ try:
     rem_capital = cash_pool - used_capital
     util_rate = (used_capital / cash_pool) * 100 if cash_pool > 0 else 0
 
-    # 1. 看板 (三分之一版面, 兩排)
+    # 1. 💡 強化版看板 (字體放大 1.5 倍)
     st.markdown("### 🏦 真實資產結算看板")
+    
+    profit_color = "#1b5e20" if total_profit >= 0 else "#b71c1c"
+    profit_bg = "#e8f5e9" if total_profit >= 0 else "#ffebee"
+    
+    # 這裡調整了 font-size (從 0.7->1.05, 0.95->1.45) 並增加了 padding
     dashboard_html = f"""
-    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 15px;">
-        <div style="background: #f8f9fa; padding: 8px; border-radius: 6px; text-align: center; border: 1px solid #ddd;">
-            <div style="font-size: 0.7rem; color: #666;">總資產權益</div><div style="font-size: 0.95rem; font-weight: bold;">${current_total_equity:,.0f}</div>
+    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 20px;">
+        <div style="background: #f8f9fa; padding: 15px 10px; border-radius: 8px; text-align: center; border: 1px solid #ddd;">
+            <div style="font-size: 1.05rem; color: #555; margin-bottom: 5px;">總資產權益</div>
+            <div style="font-size: 1.45rem; font-weight: bold; color: #222;">${current_total_equity:,.0f}</div>
         </div>
-        <div style="background: {'#e8f5e9' if total_profit>=0 else '#ffebee'}; padding: 8px; border-radius: 6px; text-align: center; border: 1px solid #ddd;">
-            <div style="font-size: 0.7rem; color: #444;">🎯 累計獲利</div><div style="font-size: 0.95rem; font-weight: bold;">${total_profit:,.0f}</div>
+        <div style="background: {profit_bg}; padding: 15px 10px; border-radius: 8px; text-align: center; border: 1px solid #ddd;">
+            <div style="font-size: 1.05rem; color: {profit_color}; margin-bottom: 5px;">🎯 累計獲利</div>
+            <div style="font-size: 1.45rem; font-weight: bold; color: {profit_color};">${total_profit:,.0f}</div>
         </div>
-        <div style="background: #f8f9fa; padding: 8px; border-radius: 6px; text-align: center; border: 1px solid #ddd;">
-            <div style="font-size: 0.7rem; color: #666;">📈 ROI</div><div style="font-size: 0.95rem; font-weight: bold;">{(total_profit/INITIAL_CAPITAL)*100:.2f}%</div>
+        <div style="background: #f8f9fa; padding: 15px 10px; border-radius: 8px; text-align: center; border: 1px solid #ddd;">
+            <div style="font-size: 1.05rem; color: #555; margin-bottom: 5px;">📈 ROI</div>
+            <div style="font-size: 1.45rem; font-weight: bold; color: #222;">{(total_profit/INITIAL_CAPITAL)*100:.2f}%</div>
         </div>
-        <div style="background: #fff3e0; padding: 8px; border-radius: 6px; text-align: center; border: 1px solid #ddd;">
-            <div style="font-size: 0.7rem; color: #e65100;">已投入資金</div><div style="font-size: 0.95rem; font-weight: bold;">${used_capital:,.0f}</div>
+        <div style="background: #fff3e0; padding: 15px 10px; border-radius: 8px; text-align: center; border: 1px solid #ddd;">
+            <div style="font-size: 1.05rem; color: #e65100; margin-bottom: 5px;">已投入資金</div>
+            <div style="font-size: 1.45rem; font-weight: bold; color: #e65100;">${used_capital:,.0f}</div>
         </div>
-        <div style="background: #f8f9fa; padding: 8px; border-radius: 6px; text-align: center; border: 1px solid #ddd;">
-            <div style="font-size: 0.7rem; color: #666;">可用現金</div><div style="font-size: 0.95rem; font-weight: bold;">${rem_capital:,.0f}</div>
+        <div style="background: #f8f9fa; padding: 15px 10px; border-radius: 8px; text-align: center; border: 1px solid #ddd;">
+            <div style="font-size: 1.05rem; color: #555; margin-bottom: 5px;">可用現金</div>
+            <div style="font-size: 1.45rem; font-weight: bold; color: #222;">${rem_capital:,.0f}</div>
         </div>
-        <div style="background: #f8f9fa; padding: 8px; border-radius: 6px; text-align: center; border: 1px solid #ddd;">
-            <div style="font-size: 0.7rem; color: #666;">利用率</div><div style="font-size: 0.95rem; font-weight: bold;">{util_rate:.1f}%</div>
+        <div style="background: #f8f9fa; padding: 15px 10px; border-radius: 8px; text-align: center; border: 1px solid #ddd;">
+            <div style="font-size: 1.05rem; color: #555; margin-bottom: 5px;">利用率</div>
+            <div style="font-size: 1.45rem; font-weight: bold; color: #222;">{util_rate:.1f}%</div>
         </div>
     </div>
     """
@@ -184,36 +165,19 @@ try:
 
     if ready_to_sell: st.error(f"🎯 停利：{', '.join(ready_to_sell)}")
 
-    # 2. 持倉雷達
-    if not active_df.empty:
-        st.markdown("#### 📡 即時持倉雷達")
-        cols = st.columns(3)
-        for i, data in enumerate(active_holdings_data):
-            with cols[i % 3]:
-                st.markdown(f"""
-                <div style="padding:10px; background:white; border-radius:8px; border-left: 5px solid {'#2196f3' if data['漲跌%']<10 else '#ef5350'}; border: 1px solid #eee;">
-                    <small>{data['標的']} ({data['代號']})</small><br>
-                    <b style="color:{'#ef5350' if data['漲跌%']>0 else '#26a69a'};">{data['漲跌%']:.2f}%</b>
-                </div>
-                """, unsafe_allow_html=True)
-    st.divider()
-
-    # 3. 頁籤
+    # 2. 頁籤與內容
     t1, t2, t3 = st.tabs(["💼 實單持股明細", "📅 歷史日誌", "🗂️ 個股追蹤"])
     with t1:
         if active_holdings_data:
             st.dataframe(pd.DataFrame(active_holdings_data), use_container_width=True, hide_index=True)
         else: st.info("無持倉。")
 
-    # 💡 [關鍵修正]：排除正在持有的股票，不讓它們出現在歷史日誌
     completed_df = df[~df['盤後紀錄'].str.contains("實單持倉中|⏳ 等待更新...", na=False)].copy()
-
     with t2:
         if not completed_df.empty:
-            completed_df['月份'] = completed_df['日期'].apply(lambda x: str(x).split('/')[0] + '月' if '/' in str(x) else '未知')
-            for m in sorted(completed_df['月份'].unique(), reverse=True):
-                st.markdown(f"**🗓️ {m}**")
-                m_df = completed_df[completed_df['月份']==m]
+            for m in sorted(completed_df['日期'].apply(lambda x: x.split('/')[0]).unique(), reverse=True):
+                st.markdown(f"**🗓️ {m}月**")
+                m_df = completed_df[completed_df['日期'].str.startswith(m)]
                 for d in sorted(m_df['日期'].unique(), reverse=True):
                     with st.expander(f"📅 {d}"):
                         for _, r in m_df[m_df['日期']==d].iterrows():
@@ -224,13 +188,5 @@ try:
         if not completed_df.empty:
             for t in sorted(completed_df['標的'].unique()):
                 with st.expander(f"📌 {t}"): st.write(completed_df[completed_df['標的']==t])
-
-    # 4. 紀律圓餅圖
-    if not completed_df.empty:
-        st.divider()
-        st.markdown("### 🎯 歷史交易紀律")
-        completed_df['動作標籤'] = completed_df['操作'].apply(lambda x: '買進' if x == '買進' else '未買進')
-        fig = px.pie(completed_df, names='動作標籤', hole=0.4, color='動作標籤', color_discrete_map={'買進':'#2196f3', '未買進':'#bdbdbd'})
-        st.plotly_chart(fig, use_container_width=True)
 
 except Exception as e: st.info(f"載入中... ({e})")
