@@ -5,92 +5,110 @@ import plotly.express as px
 import re
 from datetime import datetime
 
-# 頁面基本設定
-st.set_page_config(page_title="標的追蹤戰情室 2.3", layout="wide")
-st.title("🎯 個股追蹤戰情室 2.3")
+st.set_page_config(page_title="個股追蹤戰情室 2.5", layout="wide")
+st.title("🎯 個股追蹤戰情室 2.5")
 
-# 建立資料庫連線
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- 側邊欄：新增功能 ---
+# --- 側邊欄：精密解析功能 ---
 with st.sidebar:
-    st.header("🖊️ 紀錄新觀察")
-    user_input = st.text_area("在此貼上盤後筆記：", height=250)
+    st.header("📥 批次同步筆記")
+    user_input = st.text_area("在此貼上整理好的筆記：", height=400)
     
-    if st.button("🚀 解析並同步"):
+    if st.button("🚀 開始精密解析"):
         if user_input:
             try:
-                # 1. 抓取標的名稱
-                target_match = re.search(r'[✅| ](.*?)[：|:]', user_input)
-                target_raw = target_match.group(1).strip() if target_match else "未知標的"
-                # 2. 自動清理：移除數字代號，只保留中文名稱
-                target_clean = re.sub(r'\d+', '', target_raw).strip()
-                
-                change_match = re.search(r'\(.*?[+-](.*?)\%\)', user_input)
-                change = float(change_match.group(1)) if change_match else 0
-                if "-" in user_input and "(+" not in user_input: change = -abs(change)
-                
-                new_row = pd.DataFrame([{
-                    "日期": datetime.now().strftime("%m/%d"),
-                    "標的": target_clean,
-                    "操作": "買進" if "買" in user_input else ("觀察" if "觀察" in user_input else "紀錄"),
-                    "漲跌%": change,
-                    "盤後紀錄": user_input.replace('\n', ' ')
-                }])
-                
-                existing_df = conn.read()
-                updated_df = pd.concat([existing_df, new_row], ignore_index=True)
-                conn.update(data=updated_df)
-                st.success(f"🎉 {target_clean} 已歸位！")
-                st.rerun()
-            except:
-                st.error("格式解析錯誤。")
+                blocks = re.split(r'\n(?=✅|[\u4e00-\u9fa5]{2,4}[:：])', user_input)
+                new_data = []
+                current_date = datetime.now().strftime("%m/%d")
 
-# --- 主畫面 ---
+                for block in blocks:
+                    block = block.strip()
+                    if not block: continue
+                    
+                    # 更新日期
+                    date_match = re.search(r'(\d{1,2}/\d{1,2})', block)
+                    if date_match: current_date = date_match.group(1)
+
+                    # 提取標的 (嚴格限制長度，避免誤抓描述)
+                    lines = block.split('\n')
+                    header = lines[0]
+                    if "：" in header or ":" in header:
+                        target_part = re.split(r'[：:]', header)[0].replace('✅', '').strip()
+                        target_clean = re.sub(r'\d+', '', target_part).strip()
+                        
+                        # 如果標的名稱太長，代表抓錯了，略過
+                        if len(target_clean) > 5: continue
+                        
+                        # 拆分盤前與盤後
+                        full_content = " ".join(lines)
+                        obs_part = ""
+                        rec_part = ""
+                        if "👉🏻" in full_content:
+                            parts = full_content.split("👉🏻")
+                            obs_part = parts[0].split("：", 1)[-1].strip() if "：" in parts[0] else parts[0]
+                            rec_part = parts[1].strip()
+                        else:
+                            obs_part = full_content.split("：", 1)[-1].strip() if "：" in full_content else full_content
+
+                        # 提取漲跌
+                        change_match = re.search(r'\(([+-]?[\d\.]+)\%\)', rec_part)
+                        change = float(change_match.group(1)) if change_match else 0
+                        
+                        new_data.append({
+                            "日期": current_date,
+                            "標的": target_clean,
+                            "操作": "買進" if "✅" in header or "買" in header else "觀察",
+                            "漲跌%": change,
+                            "盤前觀察": obs_part,
+                            "盤後紀錄": rec_part
+                        })
+
+                if new_data:
+                    new_df = pd.DataFrame(new_data)
+                    existing_df = conn.read()
+                    updated_df = pd.concat([existing_df, new_df], ignore_index=True)
+                    conn.update(data=updated_df)
+                    st.success(f"🎊 已精準同步 {len(new_data)} 筆紀錄！")
+                    st.rerun()
+            except Exception as e:
+                st.error(f"解析出錯：{str(e)}")
+
+# --- 主畫面：視覺化戰情室 ---
 try:
     df = conn.read().dropna(subset=['標的'])
     df['漲跌%'] = pd.to_numeric(df['漲跌%'], errors='coerce').fillna(0)
     
-    # 【關鍵升級】：在此統一清理歷史資料中的數字代號，確保歸類一致
-    df['清理名稱'] = df['標的'].str.replace(r'\d+', '', regex=True).str.strip()
-    
-    # 1. 核心看板
-    m1, m2 = st.columns(2)
-    m1.metric("監控中標的數", f"{df['清理名稱'].nunique()} 檔")
+    # 1. 頂部勝率指標
     win_rate = (len(df[df['漲跌%'] > 0]) / len(df) * 100) if len(df) > 0 else 0
-    m2.metric("歷史預判勝率", f"{win_rate:.1f}%")
+    st.metric("📊 歷史預判總勝率", f"{win_rate:.1f}%")
 
-    st.divider()
-    
-    # 2. 勝率分佈
-    st.subheader("📊 整體勝率分佈")
+    # 2. 勝率圓餅圖
     df['類別'] = df['漲跌%'].apply(lambda x: '獲利' if x > 0 else ('虧損' if x < 0 else '持平'))
-    fig = px.pie(df, names='類別', hole=0.4, 
-                 color='類別', color_discrete_map={'獲利':'#ef5350', '虧損':'#26a69a', '持平':'#bdbdbd'})
+    fig = px.pie(df, names='類別', hole=0.4, color='類別', 
+                 color_discrete_map={'獲利':'#ef5350', '虧損':'#26a69a', '持平':'#bdbdbd'})
     st.plotly_chart(fig, use_container_width=True)
 
     st.divider()
 
-    # 3. 按清理後的名稱歸納
-    st.subheader("🔍 個股追蹤歷程 (已自動合併代號)")
-    
-    unique_targets = sorted(df['清理名稱'].unique())
-    
-    for target_name in unique_targets:
-        # 篩選該清理名稱下的所有紀錄
-        target_df = df[df['清理名稱'] == target_name].sort_values(by='日期', ascending=False)
-        last_change = target_df.iloc[0]['漲跌%']
-        status_color = "#ef5350" if last_change > 0 else ("#26a69a" if last_change < 0 else "#bdbdbd")
+    # 3. 標的追蹤清單
+    st.subheader("🔍 個股追蹤歷程")
+    unique_targets = sorted(df['標的'].unique())
+    for target in unique_targets:
+        t_df = df[df['標的'] == target].sort_values(by='日期', ascending=False)
+        l_change = t_df.iloc[0]['漲跌%']
+        color = "#ef5350" if l_change > 0 else ("#26a69a" if l_change < 0 else "#bdbdbd")
         
-        with st.expander(f"📌 {target_name} (共 {len(target_df)} 筆紀錄 | 最新：{last_change}%)"):
-            for _, row in target_df.iterrows():
+        with st.expander(f"📌 {target} (歷次平均：{t_df['漲跌%'].mean():.1f}%)"):
+            for _, row in t_df.iterrows():
                 st.markdown(f"""
-                    <div style="padding:10px; margin-bottom:5px; background:#f8f9fa; border-radius:5px; border-left: 3px solid {status_color};">
-                        <span style="color:gray; font-size:0.8rem;">{row['日期']}</span> | 
-                        <strong>{row['操作']}</strong> | {row['漲跌%']}% <br>
-                        <small>{row['盤後紀錄']}</small>
+                <div style="border-left:5px solid {color}; padding:15px; background:#f8f9fa; border-radius:10px; margin-bottom:10px;">
+                    <span style="color:gray;">📅 日期：{row['日期']}</span> | <strong>動作：{row['操作']}</strong> | <span style="color:{color}; font-weight:bold;">結果：{row['漲跌%']}%</span><br>
+                    <div style="margin-top:10px;">
+                        <p style="margin-bottom:5px;">🔍 <b>盤前觀察：</b><br>{row['盤前觀察']}</p>
+                        <p style="margin-bottom:0px;">📝 <b>盤後紀錄：</b><br>{row['盤後紀錄']}</p>
                     </div>
+                </div>
                 """, unsafe_allow_html=True)
-
 except:
-    st.info("系統讀取中...")
+    st.info("請貼上資料進行精密解析。")
