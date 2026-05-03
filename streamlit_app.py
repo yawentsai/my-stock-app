@@ -6,9 +6,10 @@ import re
 from datetime import datetime
 import yfinance as yf
 
-st.set_page_config(page_title="交易戰情室 4.1", layout="wide")
-st.title("🎯 交易戰情室 4.1 (雙棲旗艦版)")
+st.set_page_config(page_title="交易戰情室 4.2", layout="wide")
+st.title("🎯 交易戰情室 4.2 (雙棲旗艦版)")
 
+# 💡 雅雯，如果未來妳的本金增加了，只要在這裡把 100000 改成妳新的本金數字即可！
 TOTAL_CAPITAL = 100000
 
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -33,7 +34,7 @@ def get_live_price(symbol):
 with st.sidebar:
     st.header("⚡ 快速買進登錄 (實單)")
     with st.form("buy_form", clear_on_submit=True):
-        st.caption("填寫此單將扣除 10 萬本金額度並啟動即時監控")
+        st.caption("填寫此單將扣除本金額度並啟動即時監控")
         col1, col2 = st.columns(2)
         with col1: buy_name = st.text_input("名稱 (如: 晶技)")
         with col2: buy_symbol = st.text_input("代號 (如: 2449)")
@@ -146,11 +147,11 @@ try:
 
     if not df.empty:
         # ==========================================
-        # 模塊 1：💰 10萬本金與實單持倉監控 (新功能區)
+        # 模塊 1：💰 本金與實單持倉監控
         # ==========================================
         monitor_df = df[(df['操作'] == '買進') & (df['成本'] > 0)].copy()
         
-        st.markdown("### 💰 實單持倉與資金雷達 (10萬本金)")
+        st.markdown(f"### 💰 實單持倉與資金雷達 ({TOTAL_CAPITAL/10000:.0f}萬本金)")
         used_capital = monitor_df['投入金額'].sum() if not monitor_df.empty else 0
         rem_capital = TOTAL_CAPITAL - used_capital
         
@@ -163,7 +164,6 @@ try:
             plot_data = []
             total_unrealized = 0
             
-            # 即時報價卡片
             card_cols = st.columns(3)
             for i, (idx, row) in enumerate(monitor_df.iterrows()):
                 current_price = get_live_price(row['代號'])
@@ -184,7 +184,6 @@ try:
                         if profit_pct >= 10:
                             st.error(f"🚨 **{row['標的']}** 已達 10% 停利目標！")
             
-            # 第二個圓餅圖：實單持股損益分佈
             if plot_data:
                 st.write("")
                 st.caption("🔻 實單持股損益貢獻度 (圓餅大小代表影響力，紅色為獲利，綠色為虧損)")
@@ -197,25 +196,24 @@ try:
         st.divider()
 
         # ==========================================
-        # 模塊 2：🎯 歷史預判勝率與覆盤日誌 (原版保留區)
+        # 模塊 2：🎯 歷史預判勝率與覆盤日誌
         # ==========================================
         st.markdown("### 🎯 歷史預判勝率與覆盤日誌")
         
-        # 原版勝率計算與圓餅圖 (依照筆記匯入的 % 數計算)
+        # 💡 [修復點]：先給全體資料貼上獲利/虧損標籤，再篩選買進的資料去畫圓餅圖！
+        df['預判結果'] = df['漲跌%'].apply(lambda x: '獲利' if x > 0 else ('虧損' if x < 0 else '持平'))
         buy_df = df[df['操作'] == '買進']
+        
         win_rate = (len(buy_df[buy_df['漲跌%'] > 0]) / len(buy_df) * 100) if len(buy_df) > 0 else 0
         st.metric("📊 實際買進預判勝率", f"{win_rate:.1f}%")
         
-        # 完美還原原本的「獲利 vs 虧損」圓餅圖
-        df['預判結果'] = df['漲跌%'].apply(lambda x: '獲利' if x > 0 else ('虧損' if x < 0 else '持平'))
         fig_winrate = px.pie(buy_df, names='預判結果', hole=0.4, color='預判結果', 
                              color_discrete_map={'獲利':'#ef5350', '虧損':'#26a69a', '持平':'#bdbdbd'})
         fig_winrate.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=300)
         st.plotly_chart(fig_winrate, use_container_width=True)
 
-        st.write("") # 增加排版間距
+        st.write("") 
 
-        # 完美還原雙頁籤
         tab1, tab2 = st.tabs(["🗂️ 依【個股】深度追蹤", "📅 依【日期】盤後日誌"])
 
         with tab1:
