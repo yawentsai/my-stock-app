@@ -5,11 +5,12 @@ import plotly.express as px
 import re
 from datetime import datetime
 
-st.set_page_config(page_title="個股追蹤戰情室 2.8", layout="wide")
-st.title("🎯 個股追蹤戰情室 2.8 (實時破冰版)")
+st.set_page_config(page_title="個股追蹤戰情室 3.0", layout="wide")
+st.title("🎯 交易戰情室 3.0 (雙軌解析版)")
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
+# --- 側邊欄：批次同步邏輯 (維持最穩定的 2.8 版邏輯) ---
 with st.sidebar:
     st.header("📥 批次同步筆記")
     user_input = st.text_area("在此貼上整理好的筆記：", height=400)
@@ -20,7 +21,6 @@ with st.sidebar:
                 new_data = []
                 fallback_date = datetime.now().strftime("%m/%d")
 
-                # 1. 依據日期切分大區塊
                 date_blocks = re.split(r'\n(?=\d{1,2}/\d{1,2})', '\n' + user_input.strip())
                 for d_block in date_blocks:
                     d_block = d_block.strip()
@@ -35,7 +35,6 @@ with st.sidebar:
                         current_date = fallback_date
                         content_to_parse = d_block
 
-                    # 2. 依據標的切分小區塊
                     target_blocks = re.split(r'\n(?=✅|[\u4e00-\u9fa5]{2,5}[:：])', '\n' + content_to_parse)
                     for t_block in target_blocks:
                         t_block = t_block.strip()
@@ -75,11 +74,10 @@ with st.sidebar:
 
                 if new_data:
                     new_df = pd.DataFrame(new_data)
-                    # 徹底解除快取封印，強制讀取最新試算表
                     existing_df = conn.read(ttl=0)
                     updated_df = pd.concat([existing_df, new_df], ignore_index=True)
                     conn.update(data=updated_df)
-                    st.cache_data.clear() # 清除畫面記憶
+                    st.cache_data.clear()
                     st.success(f"🎊 成功同步 {len(new_data)} 筆資料！")
                     st.rerun()
                 else:
@@ -87,14 +85,14 @@ with st.sidebar:
             except Exception as e:
                 st.error(f"解析錯誤：{str(e)}")
 
-# --- 主畫面顯示 ---
+# --- 主畫面顯示：雙軌戰情看板 ---
 try:
-    # 徹底解除快取封印，強制刷新畫面
     df = conn.read(ttl=0).dropna(subset=['標的'])
     df['漲跌%'] = pd.to_numeric(df['漲跌%'], errors='coerce').fillna(0)
-    df = df[df['標的'].str.len() > 0] # 過濾空值
+    df = df[df['標的'].str.len() > 0] 
     
     if not df.empty:
+        # --- 頂部核心指標 ---
         win_rate = (len(df[df['漲跌%'] > 0]) / len(df) * 100)
         st.metric("📊 歷史預判總勝率", f"{win_rate:.1f}%")
         
@@ -103,22 +101,52 @@ try:
                      color_discrete_map={'獲利':'#ef5350', '虧損':'#26a69a', '持平':'#bdbdbd'})
         st.plotly_chart(fig, use_container_width=True)
 
-        st.subheader("🔍 個股追蹤歷程")
-        for target in sorted(df['標的'].unique()):
-            t_df = df[df['標的'] == target].sort_values(by='日期', ascending=False)
-            with st.expander(f"📌 {target} (紀錄：{len(t_df)} 筆)"):
-                for _, row in t_df.iterrows():
-                    color = "#ef5350" if row['漲跌%'] > 0 else ("#26a69a" if row['漲跌%'] < 0 else "#bdbdbd")
-                    st.markdown(f"""
-                    <div style="border-left:5px solid {color}; padding:10px; background:#f8f9fa; margin-bottom:10px;">
-                        <b>{row['日期']} | {row['操作']} | {row['漲跌%']}%</b><br>
-                        <div style="margin-top:6px; font-size:0.95rem;">
-                            <span style="color:#555;">🔍 <b>盤前觀察：</b><br>{row['盤前觀察']}</span><br><br>
-                            <span style="color:#222;">📝 <b>盤後紀錄：</b><br>{row['盤後紀錄']}</span>
+        st.divider()
+
+        # --- 雙頁籤設計：個股視角 vs 日期視角 ---
+        tab1, tab2 = st.tabs(["🗂️ 依【個股】深度追蹤", "📅 依【日期】盤後日誌"])
+
+        # 頁籤 1：依股票名稱瀏覽
+        with tab1:
+            st.subheader("🔍 個股深度追蹤歷程")
+            for target in sorted(df['標的'].unique()):
+                t_df = df[df['標的'] == target].sort_values(by='日期', ascending=False)
+                with st.expander(f"📌 {target} (總紀錄：{len(t_df)} 筆)"):
+                    for _, row in t_df.iterrows():
+                        color = "#ef5350" if row['漲跌%'] > 0 else ("#26a69a" if row['漲跌%'] < 0 else "#bdbdbd")
+                        st.markdown(f"""
+                        <div style="border-left:5px solid {color}; padding:10px; background:#f8f9fa; margin-bottom:10px;">
+                            <b>{row['日期']} | {row['操作']} | {row['漲跌%']}%</b><br>
+                            <div style="margin-top:6px; font-size:0.95rem;">
+                                <span style="color:#555;">🔍 <b>盤前：</b> {row['盤前觀察']}</span><br>
+                                <span style="color:#222;">📝 <b>盤後：</b> {row['盤後紀錄']}</span>
+                            </div>
                         </div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                        """, unsafe_allow_html=True)
+
+        # 頁籤 2：依日期瀏覽每日操作
+        with tab2:
+            st.subheader("📝 每日操作與資金流向總覽")
+            # 確保日期從最新排到最舊
+            for date in sorted(df['日期'].unique(), reverse=True):
+                d_df = df[df['日期'] == date]
+                buy_count = len(d_df[d_df['操作'] == '買進'])
+                obs_count = len(d_df[d_df['操作'] == '觀察'])
+                
+                with st.expander(f"📅 {date} (買進: {buy_count} 檔 | 觀察: {obs_count} 檔)", expanded=True if date == df['日期'].max() else False):
+                    for _, row in d_df.iterrows():
+                        action_badge = f"<span style='background-color:#ef5350; color:white; padding:2px 6px; border-radius:4px; font-size:0.8rem;'>買進</span>" if row['操作'] == '買進' else f"<span style='background-color:#bdbdbd; color:white; padding:2px 6px; border-radius:4px; font-size:0.8rem;'>觀察</span>"
+                        result_color = "#ef5350" if row['漲跌%'] > 0 else ("#26a69a" if row['漲跌%'] < 0 else "gray")
+                        
+                        st.markdown(f"""
+                        <div style="padding:8px; border-bottom:1px solid #eee;">
+                            {action_badge} <strong>{row['標的']}</strong> 
+                            <span style="color:{result_color}; float:right; font-weight:bold;">{row['漲跌%']}%</span><br>
+                            <span style="color:#666; font-size:0.85rem;">📝 {row['盤後紀錄']}</span>
+                        </div>
+                        """, unsafe_allow_html=True)
+
     else:
-        st.info("資料庫目前為空，請在左側匯入資料。")
+        st.info("資料庫目前為空，請在左側貼上資料進行解析。")
 except Exception as e:
-    st.info("系統連線中，請稍候。")
+    st.info("系統連線中，或資料格式需要重整。")
