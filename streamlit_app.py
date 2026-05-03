@@ -5,8 +5,8 @@ import plotly.express as px
 from datetime import datetime
 import yfinance as yf
 
-st.set_page_config(page_title="交易戰情室 5.0", layout="wide")
-st.title("🎯 交易戰情室 5.0 (持股明細版)")
+st.set_page_config(page_title="交易戰情室 5.1", layout="wide")
+st.title("🎯 交易戰情室 5.1 (視覺動線優化版)")
 
 # 💡 初始本金設定
 INITIAL_CAPITAL = 100000
@@ -270,33 +270,28 @@ try:
             with c_w1:
                 st.metric("📊 實際買進預判勝率", f"{win_r:.1f}%")
             with c_w2:
+                # 💡 在這裡將「買進」的顏色換成了科技藍 (#2196f3)
                 fig = px.pie(completed_df, names='動作標籤', hole=0.4, color='動作標籤', 
-                             color_discrete_map={'買進':'#ef5350', '未買進':'#bdbdbd'})
+                             color_discrete_map={'買進':'#2196f3', '未買進':'#bdbdbd'})
                 fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=200)
                 st.plotly_chart(fig, use_container_width=True)
 
         st.write("") 
-        # --- 全新加入：三頁籤設計 ---
-        tab1, tab2, tab3 = st.tabs(["🗂️ 依【個股】深度追蹤", "📅 依【日期】盤後日誌", "💼 實單持股明細"])
+        
+        # 💡 在這裡將頁籤順序重新排列，讓「實單持股明細」排在第一位
+        tab1, tab2, tab3 = st.tabs(["💼 實單持股明細", "📅 依【日期】盤後日誌", "🗂️ 依【個股】深度追蹤"])
         
         with tab1:
-            for target in sorted(df['標的'].unique()):
-                t_df = df[df['標的'] == target].sort_values(by='日期', ascending=False)
-                with st.expander(f"📌 {target} (紀錄：{len(t_df)} 筆)"):
-                    for _, row in t_df.iterrows():
-                        color = "#ef5350" if row['漲跌%'] > 0 else ("#26a69a" if row['漲跌%'] < 0 else "#bdbdbd")
-                        status_str = f"賣出結算價: ${row['賣出價']} (損益: ${row['實現損益']:,.0f})" if row['賣出價'] > 0 else "未結算/預判"
-                        st.markdown(f"""
-                        <div style="border-left:5px solid {color}; padding:10px; background:#f8f9fa; margin-bottom:10px;">
-                            <b>{row['日期']} | {row['操作']} | <span style="color:{color};">{row['漲跌%']}%</span></b><br>
-                            <small style="color:gray;">{status_str}</small>
-                            <div style="margin-top:6px; font-size:0.95rem;">
-                                <span style="color:#555;">🔍 <b>盤前：</b> {row['盤前觀察']}</span><br>
-                                <span style="color:#222;">📝 <b>盤後：</b> {row['盤後紀錄']}</span>
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True)
-
+            st.markdown("#### 💼 實單持股庫存明細")
+            if active_holdings_data:
+                holdings_df = pd.DataFrame(active_holdings_data)
+                display_df = holdings_df[['日期', '標的', '代號', '股數', '成本', '現價', '投入金額', '損益TWD']].copy()
+                display_df.columns = ['買進日期', '標的名稱', '股票代號', '持有股數', '平均成本', '即時現價', '投入本金', '目前損益']
+                
+                st.dataframe(display_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("目前無正在持有的實單紀錄。")
+                
         with tab2:
             df['月份'] = df['日期'].apply(lambda x: str(x).split('/')[0] + '月' if '/' in str(x) else '未知')
             def sort_month(m_str):
@@ -319,19 +314,23 @@ try:
                             </div>
                             """, unsafe_allow_html=True)
                             
-        # --- 全新第三頁籤內容 ---
         with tab3:
-            st.markdown("#### 💼 實單持股庫存明細")
-            if active_holdings_data:
-                # 建立要顯示的 DataFrame，並將欄位名稱改得更符合財務邏輯
-                holdings_df = pd.DataFrame(active_holdings_data)
-                display_df = holdings_df[['日期', '標的', '代號', '股數', '成本', '現價', '投入金額', '損益TWD']].copy()
-                display_df.columns = ['買進日期', '標的名稱', '股票代號', '持有股數', '平均成本', '即時現價', '投入本金', '目前損益']
-                
-                # 在 Streamlit 中完美呈現表格
-                st.dataframe(display_df, use_container_width=True, hide_index=True)
-            else:
-                st.info("目前無正在持有的實單紀錄。")
+            for target in sorted(df['標的'].unique()):
+                t_df = df[df['標的'] == target].sort_values(by='日期', ascending=False)
+                with st.expander(f"📌 {target} (紀錄：{len(t_df)} 筆)"):
+                    for _, row in t_df.iterrows():
+                        color = "#ef5350" if row['漲跌%'] > 0 else ("#26a69a" if row['漲跌%'] < 0 else "#bdbdbd")
+                        status_str = f"賣出結算價: ${row['賣出價']} (損益: ${row['實現損益']:,.0f})" if row['賣出價'] > 0 else "未結算/預判"
+                        st.markdown(f"""
+                        <div style="border-left:5px solid {color}; padding:10px; background:#f8f9fa; margin-bottom:10px;">
+                            <b>{row['日期']} | {row['操作']} | <span style="color:{color};">{row['漲跌%']}%</span></b><br>
+                            <small style="color:gray;">{status_str}</small>
+                            <div style="margin-top:6px; font-size:0.95rem;">
+                                <span style="color:#555;">🔍 <b>盤前：</b> {row['盤前觀察']}</span><br>
+                                <span style="color:#222;">📝 <b>盤後：</b> {row['盤後紀錄']}</span>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
                 
     else:
         st.info("資料庫目前為空。")
