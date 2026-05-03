@@ -5,8 +5,8 @@ import plotly.express as px
 from datetime import datetime
 import yfinance as yf
 
-st.set_page_config(page_title="交易戰情室 4.5", layout="wide")
-st.title("🎯 交易戰情室 4.5 (閉環結算版)")
+st.set_page_config(page_title="交易戰情室 4.6", layout="wide")
+st.title("🎯 交易戰情室 4.6 (精準管理版)")
 
 # 💡 初始本金設定
 INITIAL_CAPITAL = 100000
@@ -32,7 +32,6 @@ def get_live_price(symbol):
 # --- 讀取與初始化資料庫 ---
 try:
     existing_df = conn.read(ttl=0)
-    # 確保所有必要欄位存在，包含新增的賣出欄位
     required_cols = ['日期', '標的', '代號', '操作', '成本', '股數', '投入金額', '漲跌%', '盤前觀察', '盤後紀錄', '賣出價', '實現損益']
     for col in required_cols:
         if col not in existing_df.columns:
@@ -75,7 +74,7 @@ with st.sidebar:
                 except Exception as e:
                     st.error(f"寫入失敗: {str(e)}")
 
-    # 2. 賣出表單 (全新結算功能)
+    # 2. 賣出表單 (結算)
     with st.expander("💸 賣出登錄 (出場結算)", expanded=True):
         active_holdings = existing_df[(existing_df['操作'] == '買進') & (existing_df['盤後紀錄'] == '實單持倉中')]
         if not active_holdings.empty:
@@ -146,10 +145,53 @@ with st.sidebar:
             st.info("✅ 無待更新標的。")
 
     st.divider()
-    if st.button("🗑️ 一鍵清空舊資料庫"):
-        conn.update(data=pd.DataFrame(columns=required_cols))
-        st.cache_data.clear()
-        st.rerun()
+    
+    # ==========================================
+    # 🎯 全新設計：精準區間刪除系統
+    # ==========================================
+    st.header("⚙️ 資料庫管理")
+    with st.expander("🗑️ 刪除歷史資料 (指定區間)", expanded=False):
+        st.caption("在日曆上點擊「開始日期」與「結束日期」，刪除該範圍內的紀錄。")
+        
+        # 顯示目前資料庫有的日期範圍供參考
+        if not existing_df.empty:
+            unique_dates = sorted(existing_df['日期'].unique())
+            st.write(f"<small>目前資料庫日期範圍：{unique_dates[0]} ~ {unique_dates[-1]}</small>", unsafe_allow_html=True)
+            
+        date_range = st.date_input("選擇要刪除的日期區間", value=[])
+        
+        if st.button("🚨 確認刪除選定區間"):
+            if len(date_range) == 2:
+                start_date, end_date = date_range[0], date_range[1]
+                
+                # 判定日期是否在區間內的函數
+                def is_in_range(d_str):
+                    try:
+                        # 補上今年年份以便轉換成完整日期比較
+                        d = datetime.strptime(d_str, "%m/%d").replace(year=datetime.now().year).date()
+                        return start_date <= d <= end_date
+                    except:
+                        return False
+                
+                # 保留「不在」這個區間內的資料 (~ 代表反向)
+                keep_mask = ~existing_df['日期'].apply(is_in_range)
+                df_to_keep = existing_df[keep_mask]
+                
+                deleted_count = len(existing_df) - len(df_to_keep)
+                
+                conn.update(data=df_to_keep)
+                st.cache_data.clear()
+                st.success(f"✅ 已成功刪除 {deleted_count} 筆區間內的資料！")
+                st.rerun()
+            else:
+                st.warning("⚠️ 操作失敗：請在上方日曆點選「兩個日期」形成區間。")
+                
+        st.write("---")
+        st.caption("⚠️ 終極還原：若需徹底重置所有資料，請點擊下方按鈕。")
+        if st.button("💣 徹底清空全部資料庫"):
+            conn.update(data=pd.DataFrame(columns=required_cols))
+            st.cache_data.clear()
+            st.rerun()
 
 # --- 主畫面顯示 ---
 try:
@@ -161,7 +203,6 @@ try:
         # ==========================================
         # 模塊 1：💰 總資產與實單監控
         # ==========================================
-        # 提取已結算的真實獲利/虧損
         total_realized_pnl = df['實現損益'].sum()
         current_total_capital = INITIAL_CAPITAL + total_realized_pnl
         
