@@ -5,9 +5,9 @@ import plotly.express as px
 from datetime import datetime, date
 import yfinance as yf
 
-# 標題更名
+# 標題設定
 st.set_page_config(page_title="零股追蹤神器", layout="wide")
-st.title("🚀 零股追蹤神器 6.1")
+st.title("🚀 零股追蹤神器 6.2")
 
 # 💡 初始本金設定
 INITIAL_CAPITAL = 100000
@@ -49,7 +49,6 @@ with st.sidebar:
     st.header("⚡ 實單操作區")
     with st.expander("🛒 買進/初始化持股", expanded=True):
         with st.form("buy_form", clear_on_submit=True):
-            st.caption("輸入現有持股時，請填寫『平均成本』")
             init_date = st.date_input("買進日期", value=date.today())
             col1, col2 = st.columns(2)
             with col1: buy_name = st.text_input("名稱")
@@ -101,10 +100,13 @@ try:
         p_pct = ((curr_p - row['成本']) / row['成本']) * 100 if curr_p else 0.0
         p_twd = (curr_p - row['成本']) * row['股數'] if curr_p else 0.0
         total_unrealized_pnl += p_twd
-        active_holdings_data.append({'日期': row['日期'], '標的': row['標的'], '代號': row['代號'], '成本': row['成本'], '股數': row['股數'], '投入金額': row['投入金額'], '現價': curr_p if curr_p else "讀取中...", '漲跌%': p_pct, '損益TWD': p_twd})
-        # 💡 判定 10% 標準
-        if p_pct >= 10:
-            ready_to_sell_names.append(f"{row['標的']} (+{p_pct:.1f}%)")
+        active_holdings_data.append({
+            '日期': row['日期'], '標的': row['標的'], '代號': row['代號'], 
+            '成本': row['成本'], '股數': row['股數'], '投入金額': row['投入金額'], 
+            '現價': curr_p if curr_p else "讀取中...", 
+            '損益金額': p_twd, '損益率': p_pct
+        })
+        if p_pct >= 10: ready_to_sell_names.append(f"{row['標的']} (+{p_pct:.1f}%)")
                 
     total_profit = total_realized_pnl + total_unrealized_pnl
     current_total_equity = INITIAL_CAPITAL + total_profit
@@ -146,20 +148,11 @@ try:
     """
     st.markdown(dashboard_html, unsafe_allow_html=True)
 
-    # 💡 [全新區塊]：獲利 10% 賣出標準欄位
     if ready_to_sell_names:
         st.markdown(f"""
-        <div style="padding: 15px; border-radius: 8px; background-color: #ffebee; border: 2px solid #ef5350; margin-bottom: 20px; animation: pulse 2s infinite;">
-            <h4 style="margin-top: 0; color: #c62828; font-size: 1.3rem;">🚨 停利標準已達標 ({len(ready_to_sell_names)} 檔)</h4>
-            <p style="margin-bottom: 0; font-size: 1.1rem; color: #b71c1c; font-weight: bold;">
-                👉 可賣出清單：{', '.join(ready_to_sell_names)}
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-    else:
-        st.markdown("""
-        <div style="padding: 10px; border-radius: 8px; background-color: #f1f3f4; border: 1px dashed #999; margin-bottom: 20px; text-align: center;">
-            <span style="color: #666; font-size: 0.9rem;">✅ 目前持股獲利尚未達 10% 停利標準，請繼續耐心持有。</span>
+        <div style="padding: 15px; border-radius: 8px; background-color: #ffebee; border: 2px solid #ef5350; margin-bottom: 20px;">
+            <h4 style="margin-top: 0; color: #c62828;">🚨 停利標準已達標 ({len(ready_to_sell_names)} 檔)</h4>
+            <p style="margin-bottom: 0; font-size: 1.1rem; color: #b71c1c; font-weight: bold;">👉 可賣出：{', '.join(ready_to_sell_names)}</p>
         </div>
         """, unsafe_allow_html=True)
 
@@ -167,8 +160,23 @@ try:
     t1, t2, t3 = st.tabs(["💼 實單持股明細", "📅 歷史日誌", "🗂️ 個股追蹤"])
     with t1:
         if active_holdings_data:
-            st.dataframe(pd.DataFrame(active_holdings_data), use_container_width=True, hide_index=True)
-        else: st.info("無持倉。")
+            # 💡 [全新優化]：顯化損益欄位並加上格式
+            df_display = pd.DataFrame(active_holdings_data)
+            # 調整顯示名稱
+            df_display.columns = ['買進日期', '標的名稱', '代號', '均價', '股數', '投入本金', '即時現價', '損益金額', '損益率%']
+            
+            # 使用 st.dataframe 的進階配置功能來美化損益
+            st.dataframe(
+                df_display,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "損益金額": st.column_config.NumberColumn(format="$%d"),
+                    "損益率%": st.column_config.NumberColumn(format="%.2f%%"),
+                    "買進日期": st.column_config.TextColumn(width="small")
+                }
+            )
+        else: st.info("目前無持倉紀錄。")
 
     completed_df = df[~df['盤後紀錄'].str.contains("實單持倉中|⏳ 等待更新...", na=False)].copy()
     with t2:
