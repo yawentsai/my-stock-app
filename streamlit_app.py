@@ -7,7 +7,7 @@ import yfinance as yf
 
 # 標題更名
 st.set_page_config(page_title="零股追蹤神器", layout="wide")
-st.title("🚀 零股追蹤神器 6.0")
+st.title("🚀 零股追蹤神器 6.1")
 
 # 💡 初始本金設定
 INITIAL_CAPITAL = 100000
@@ -57,20 +57,13 @@ with st.sidebar:
             buy_price = st.number_input("買入均價*", min_value=0.0, step=0.1)
             buy_qty = st.number_input("持有股數*", min_value=0, step=1, value=100)
             buy_obs = st.text_area("進場備註")
-            
             if st.form_submit_button("✅ 確認加入庫存"):
                 if (buy_name or buy_symbol) and buy_price > 0:
                     name_val = buy_name.strip() if buy_name.strip() else buy_symbol.strip()
                     cost = buy_price * buy_qty
-                    new_row = pd.DataFrame([{
-                        "日期": init_date.strftime("%m/%d"), "標的": name_val, "代號": buy_symbol.strip(),
-                        "操作": "買進", "成本": float(buy_price), "股數": int(buy_qty), "投入金額": cost, 
-                        "漲跌%": 0.0, "盤前觀察": buy_obs.replace('\n', ' '), "盤後紀錄": "實單持倉中",
-                        "賣出價": 0.0, "實現損益": 0.0
-                    }])
+                    new_row = pd.DataFrame([{"日期": init_date.strftime("%m/%d"), "標的": name_val, "代號": buy_symbol.strip(), "操作": "買進", "成本": float(buy_price), "股數": int(buy_qty), "投入金額": cost, "漲跌%": 0.0, "盤前觀察": buy_obs.replace('\n', ' '), "盤後紀錄": "實單持倉中", "賣出價": 0.0, "實現損益": 0.0}])
                     conn.update(data=pd.concat([existing_df, new_row], ignore_index=True))
-                    st.cache_data.clear()
-                    st.rerun()
+                    st.cache_data.clear(); st.rerun()
 
     with st.expander("💸 賣出結算"):
         active_holdings = existing_df[(existing_df['操作'] == '買進') & (existing_df['盤後紀錄'] == '實單持倉中')]
@@ -81,14 +74,12 @@ with st.sidebar:
                 sell_price = st.number_input("賣出單價*", min_value=0.0, step=0.1)
                 sell_note = st.text_input("出場檢討")
                 if st.form_submit_button("💰 確認賣出"):
-                    sel_date, sel_name_cost = selected_sell.split(" - ", 1)
-                    sel_name = sel_name_cost.split(" (")[0]
-                    idx = existing_df[(existing_df['日期'] == sel_date) & (existing_df['標的'] == sel_name) & (existing_df['盤後紀錄'] == '實單持倉中')].index[0]
-                    cost_p = existing_df.at[idx, '成本']; qty = existing_df.at[idx, '股數']
-                    realized = (sell_price - cost_p) * qty
-                    existing_df.at[idx, '賣出價'] = float(sell_price)
-                    existing_df.at[idx, '實現損益'] = float(realized)
-                    existing_df.at[idx, '漲跌%'] = ((sell_price - cost_p) / cost_p) * 100
+                    sd, sn_cost = selected_sell.split(" - ", 1); sn = sn_cost.split(" (")[0]
+                    idx = existing_df[(existing_df['日期'] == sd) & (existing_df['標的'] == sn) & (existing_df['盤後紀錄'] == '實單持倉中')].index[0]
+                    cp = existing_df.at[idx, '成本']; q = existing_df.at[idx, '股數']
+                    realized = (sell_price - cp) * q
+                    existing_df.at[idx, '賣出價'] = float(sell_price); existing_df.at[idx, '實現損益'] = float(realized)
+                    existing_df.at[idx, '漲跌%'] = ((sell_price - cp) / cp) * 100
                     existing_df.at[idx, '盤後紀錄'] = f"已出場 ({sell_note})" if sell_note else "已出場"
                     conn.update(data=existing_df); st.cache_data.clear(); st.rerun()
 
@@ -103,7 +94,7 @@ try:
     
     total_unrealized_pnl = 0
     active_holdings_data = []
-    ready_to_sell = []
+    ready_to_sell_names = []
     
     for i, (idx, row) in enumerate(active_df.iterrows()):
         curr_p = get_live_price(row['代號'])
@@ -111,7 +102,9 @@ try:
         p_twd = (curr_p - row['成本']) * row['股數'] if curr_p else 0.0
         total_unrealized_pnl += p_twd
         active_holdings_data.append({'日期': row['日期'], '標的': row['標的'], '代號': row['代號'], '成本': row['成本'], '股數': row['股數'], '投入金額': row['投入金額'], '現價': curr_p if curr_p else "讀取中...", '漲跌%': p_pct, '損益TWD': p_twd})
-        if p_pct >= 10: ready_to_sell.append(f"{row['標的']} (+{p_pct:.1f}%)")
+        # 💡 判定 10% 標準
+        if p_pct >= 10:
+            ready_to_sell_names.append(f"{row['標的']} (+{p_pct:.1f}%)")
                 
     total_profit = total_realized_pnl + total_unrealized_pnl
     current_total_equity = INITIAL_CAPITAL + total_profit
@@ -153,9 +146,24 @@ try:
     """
     st.markdown(dashboard_html, unsafe_allow_html=True)
 
-    if ready_to_sell: st.error(f"🎯 停利：{', '.join(ready_to_sell)}")
+    # 💡 [全新區塊]：獲利 10% 賣出標準欄位
+    if ready_to_sell_names:
+        st.markdown(f"""
+        <div style="padding: 15px; border-radius: 8px; background-color: #ffebee; border: 2px solid #ef5350; margin-bottom: 20px; animation: pulse 2s infinite;">
+            <h4 style="margin-top: 0; color: #c62828; font-size: 1.3rem;">🚨 停利標準已達標 ({len(ready_to_sell_names)} 檔)</h4>
+            <p style="margin-bottom: 0; font-size: 1.1rem; color: #b71c1c; font-weight: bold;">
+                👉 可賣出清單：{', '.join(ready_to_sell_names)}
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown("""
+        <div style="padding: 10px; border-radius: 8px; background-color: #f1f3f4; border: 1px dashed #999; margin-bottom: 20px; text-align: center;">
+            <span style="color: #666; font-size: 0.9rem;">✅ 目前持股獲利尚未達 10% 停利標準，請繼續耐心持有。</span>
+        </div>
+        """, unsafe_allow_html=True)
 
-    # 頁籤與內容
+    # 頁籤
     t1, t2, t3 = st.tabs(["💼 實單持股明細", "📅 歷史日誌", "🗂️ 個股追蹤"])
     with t1:
         if active_holdings_data:
@@ -176,15 +184,12 @@ try:
             for t in sorted(completed_df['標的'].unique()):
                 with st.expander(f"📌 {t}"): st.write(completed_df[completed_df['標的']==t])
 
-    # 💡 [圓餅圖修正點]：不管有沒有結算，只要有輸入資料，就顯示紀律圓餅圖
     if not df.empty:
         st.divider()
         st.markdown("### 🎯 總交易紀律比例 (買進 vs. 觀察)")
-        # 統計所有操作紀錄
         discipline_df = df.copy()
         discipline_df['動作標籤'] = discipline_df['操作'].apply(lambda x: '買進' if x == '買進' else '未買進')
-        fig = px.pie(discipline_df, names='動作標籤', hole=0.4, color='動作標籤', 
-                     color_discrete_map={'買進':'#2196f3', '未買進':'#bdbdbd'})
+        fig = px.pie(discipline_df, names='動作標籤', hole=0.4, color='動作標籤', color_discrete_map={'買進':'#2196f3', '未買進':'#bdbdbd'})
         fig.update_layout(margin=dict(t=30, b=0, l=0, r=0), height=350)
         st.plotly_chart(fig, use_container_width=True)
 
