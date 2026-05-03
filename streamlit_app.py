@@ -5,8 +5,8 @@ import plotly.express as px
 import re
 from datetime import datetime
 
-st.set_page_config(page_title="交易戰情室 3.2", layout="wide")
-st.title("🎯 交易戰情室 3.2 (終極數據精準版)")
+st.set_page_config(page_title="交易戰情室 3.3", layout="wide")
+st.title("🎯 交易戰情室 3.3 (暴力數據破解版)")
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
@@ -58,9 +58,10 @@ with st.sidebar:
                             else:
                                 obs_part = full_content.split("：", 1)[-1].strip() if "：" in full_content else full_content
 
-                            # 【關鍵升級】：全新數字雷達，無視括號種類與多餘文字，直接精準抓取 % 前的數字
-                            change_match = re.search(r'([+-]?\d+(?:\.\d+)?)\s*%', rec_part if rec_part else full_content)
-                            change = float(change_match.group(1)) if change_match else 0.0
+                            # 【暴力破解】：全形轉半形，無視符號直接抓最後一個帶正負號的數字
+                            norm_text = (rec_part if rec_part else full_content).replace('＋', '+').replace('－', '-').replace(' ', '')
+                            matches = re.findall(r'([+-]\d+(?:\.\d+)?)', norm_text)
+                            change = float(matches[-1]) if matches else 0.0
                             
                             is_buy = "✅" in header or "買" in full_content
                             
@@ -85,6 +86,15 @@ with st.sidebar:
                     st.warning("沒抓到資料，請檢查格式。")
             except Exception as e:
                 st.error(f"解析錯誤：{str(e)}")
+                
+    st.divider()
+    st.header("⚙️ 系統管理")
+    if st.button("🗑️ 一鍵清空舊資料庫"):
+        empty_df = pd.DataFrame(columns=["日期", "標的", "操作", "漲跌%", "盤前觀察", "盤後紀錄"])
+        conn.update(data=empty_df)
+        st.cache_data.clear()
+        st.success("✅ 資料庫已徹底清空！請重新貼上筆記並匯入。")
+        st.rerun()
 
 # --- 主畫面顯示 ---
 try:
@@ -99,7 +109,7 @@ try:
     df['漲跌%'] = pd.to_numeric(df['漲跌%'], errors='coerce').fillna(0.0)
     
     if not df.empty:
-        # 計算勝率 (僅計算有操作且漲跌不為0的標的)
+        # 勝率計算
         buy_df = df[df['操作'] == '買進']
         win_rate = (len(buy_df[buy_df['漲跌%'] > 0]) / len(buy_df) * 100) if len(buy_df) > 0 else 0
         st.metric("📊 實際買進預判勝率", f"{win_rate:.1f}%")
@@ -122,7 +132,7 @@ try:
                         color = "#ef5350" if row['漲跌%'] > 0 else ("#26a69a" if row['漲跌%'] < 0 else "#bdbdbd")
                         st.markdown(f"""
                         <div style="border-left:5px solid {color}; padding:10px; background:#f8f9fa; margin-bottom:10px;">
-                            <b>{row['日期']} | {row['操作']} | {row['漲跌%']}%</b><br>
+                            <b>{row['日期']} | {row['操作']} | <span style="color:{color};">{row['漲跌%']}%</span></b><br>
                             <div style="margin-top:6px; font-size:0.95rem;">
                                 <span style="color:#555;">🔍 <b>盤前：</b> {row['盤前觀察']}</span><br>
                                 <span style="color:#222;">📝 <b>盤後：</b> {row['盤後紀錄']}</span>
