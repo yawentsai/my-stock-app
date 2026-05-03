@@ -5,8 +5,8 @@ import plotly.express as px
 import re
 from datetime import datetime
 
-st.set_page_config(page_title="交易戰情室 3.3", layout="wide")
-st.title("🎯 交易戰情室 3.3 (暴力數據破解版)")
+st.set_page_config(page_title="交易戰情室 3.4", layout="wide")
+st.title("🎯 交易戰情室 3.4 (層次分明版)")
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
@@ -58,7 +58,6 @@ with st.sidebar:
                             else:
                                 obs_part = full_content.split("：", 1)[-1].strip() if "：" in full_content else full_content
 
-                            # 【暴力破解】：全形轉半形，無視符號直接抓最後一個帶正負號的數字
                             norm_text = (rec_part if rec_part else full_content).replace('＋', '+').replace('－', '-').replace(' ', '')
                             matches = re.findall(r'([+-]\d+(?:\.\d+)?)', norm_text)
                             change = float(matches[-1]) if matches else 0.0
@@ -100,7 +99,6 @@ with st.sidebar:
 try:
     df = conn.read(ttl=0).dropna(subset=['標的'])
     
-    # 標的淨化
     df['標的'] = df['標的'].astype(str)
     df['標的'] = df['標的'].str.replace(r'\d+', '', regex=True).str.strip()
     df = df[df['標的'].str.len() <= 6]
@@ -109,14 +107,15 @@ try:
     df['漲跌%'] = pd.to_numeric(df['漲跌%'], errors='coerce').fillna(0.0)
     
     if not df.empty:
-        # 勝率計算
+        # 勝率計算 (保留最頂端的獨立指標)
         buy_df = df[df['操作'] == '買進']
         win_rate = (len(buy_df[buy_df['漲跌%'] > 0]) / len(buy_df) * 100) if len(buy_df) > 0 else 0
         st.metric("📊 實際買進預判勝率", f"{win_rate:.1f}%")
         
-        df['類別'] = df['漲跌%'].apply(lambda x: '獲利' if x > 0 else ('虧損' if x < 0 else '持平'))
-        fig = px.pie(df, names='類別', hole=0.4, color='類別', 
-                     color_discrete_map={'獲利':'#ef5350', '虧損':'#26a69a', '持平':'#bdbdbd'})
+        # 【修改1】圓餅圖改為顯示「操作」比例 (買進 vs 觀察)
+        fig = px.pie(df, names='操作', hole=0.4, color='操作', 
+                     color_discrete_map={'買進':'#ef5350', '觀察':'#bdbdbd'})
+        fig.update_layout(margin=dict(t=0, b=0, l=0, r=0))
         st.plotly_chart(fig, use_container_width=True)
 
         st.divider()
@@ -142,23 +141,38 @@ try:
 
         with tab2:
             st.subheader("📝 每日操作與資金流向總覽")
-            for date in sorted(df['日期'].unique(), reverse=True):
-                d_df = df[df['日期'] == date]
-                buy_count = len(d_df[d_df['操作'] == '買進'])
-                obs_count = len(d_df[d_df['操作'] == '觀察'])
+            
+            # 【修改2】新增月份層級的分類
+            df['月份'] = df['日期'].apply(lambda x: str(x).split('/')[0] + '月' if '/' in str(x) else '未知')
+            
+            def sort_month(m_str):
+                try: return int(m_str.replace('月', ''))
+                except: return 0
                 
-                with st.expander(f"📅 {date} (買進: {buy_count} 檔 | 觀察: {obs_count} 檔)", expanded=True if date == df['日期'].max() else False):
-                    for _, row in d_df.iterrows():
-                        action_badge = f"<span style='background-color:#ef5350; color:white; padding:2px 6px; border-radius:4px; font-size:0.8rem;'>買進</span>" if row['操作'] == '買進' else f"<span style='background-color:#bdbdbd; color:white; padding:2px 6px; border-radius:4px; font-size:0.8rem;'>觀察</span>"
-                        result_color = "#ef5350" if row['漲跌%'] > 0 else ("#26a69a" if row['漲跌%'] < 0 else "gray")
-                        
-                        st.markdown(f"""
-                        <div style="padding:8px; border-bottom:1px solid #eee;">
-                            {action_badge} <strong>{row['標的']}</strong> 
-                            <span style="color:{result_color}; float:right; font-weight:bold;">{row['漲跌%']}%</span><br>
-                            <span style="color:#666; font-size:0.85rem;">📝 {row['盤後紀錄']}</span>
-                        </div>
-                        """, unsafe_allow_html=True)
+            months = sorted(df['月份'].unique(), key=sort_month, reverse=True)
+            
+            for month in months:
+                st.markdown(f"### 🗓️ {month}")
+                m_df = df[df['月份'] == month]
+                dates = sorted(m_df['日期'].unique(), reverse=True)
+                
+                for date in dates:
+                    d_df = m_df[m_df['日期'] == date]
+                    buy_count = len(d_df[d_df['操作'] == '買進'])
+                    obs_count = len(d_df[d_df['操作'] == '觀察'])
+                    
+                    with st.expander(f"📅 {date} (買進: {buy_count} 檔 | 觀察: {obs_count} 檔)", expanded=True if date == df['日期'].max() else False):
+                        for _, row in d_df.iterrows():
+                            action_badge = f"<span style='background-color:#ef5350; color:white; padding:2px 6px; border-radius:4px; font-size:0.8rem;'>買進</span>" if row['操作'] == '買進' else f"<span style='background-color:#bdbdbd; color:white; padding:2px 6px; border-radius:4px; font-size:0.8rem;'>觀察</span>"
+                            result_color = "#ef5350" if row['漲跌%'] > 0 else ("#26a69a" if row['漲跌%'] < 0 else "gray")
+                            
+                            st.markdown(f"""
+                            <div style="padding:8px; border-bottom:1px solid #eee;">
+                                {action_badge} <strong>{row['標的']}</strong> 
+                                <span style="color:{result_color}; float:right; font-weight:bold;">{row['漲跌%']}%</span><br>
+                                <span style="color:#666; font-size:0.85rem;">📝 {row['盤後紀錄']}</span>
+                            </div>
+                            """, unsafe_allow_html=True)
 
     else:
         st.info("資料庫目前為空，請在左側貼上資料進行解析。")
