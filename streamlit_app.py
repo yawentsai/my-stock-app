@@ -5,8 +5,8 @@ import plotly.express as px
 from datetime import datetime
 import yfinance as yf
 
-st.set_page_config(page_title="交易戰情室 4.6", layout="wide")
-st.title("🎯 交易戰情室 4.6 (精準管理版)")
+st.set_page_config(page_title="交易戰情室 4.7", layout="wide")
+st.title("🎯 交易戰情室 4.7 (獵物鎖定版)")
 
 # 💡 初始本金設定
 INITIAL_CAPITAL = 100000
@@ -47,7 +47,6 @@ for col in ['成本', '股數', '投入金額', '漲跌%', '賣出價', '實現�
 with st.sidebar:
     st.header("⚡ 實單操作區")
     
-    # 1. 買進表單
     with st.expander("🛒 買進登錄 (進場)", expanded=True):
         with st.form("buy_form", clear_on_submit=True):
             col1, col2 = st.columns(2)
@@ -74,7 +73,6 @@ with st.sidebar:
                 except Exception as e:
                     st.error(f"寫入失敗: {str(e)}")
 
-    # 2. 賣出表單 (結算)
     with st.expander("💸 賣出登錄 (出場結算)", expanded=True):
         active_holdings = existing_df[(existing_df['操作'] == '買進') & (existing_df['盤後紀錄'] == '實單持倉中')]
         if not active_holdings.empty:
@@ -146,39 +144,25 @@ with st.sidebar:
 
     st.divider()
     
-    # ==========================================
-    # 🎯 全新設計：精準區間刪除系統
-    # ==========================================
     st.header("⚙️ 資料庫管理")
     with st.expander("🗑️ 刪除歷史資料 (指定區間)", expanded=False):
-        st.caption("在日曆上點擊「開始日期」與「結束日期」，刪除該範圍內的紀錄。")
-        
-        # 顯示目前資料庫有的日期範圍供參考
         if not existing_df.empty:
             unique_dates = sorted(existing_df['日期'].unique())
             st.write(f"<small>目前資料庫日期範圍：{unique_dates[0]} ~ {unique_dates[-1]}</small>", unsafe_allow_html=True)
             
         date_range = st.date_input("選擇要刪除的日期區間", value=[])
-        
         if st.button("🚨 確認刪除選定區間"):
             if len(date_range) == 2:
                 start_date, end_date = date_range[0], date_range[1]
-                
-                # 判定日期是否在區間內的函數
                 def is_in_range(d_str):
                     try:
-                        # 補上今年年份以便轉換成完整日期比較
                         d = datetime.strptime(d_str, "%m/%d").replace(year=datetime.now().year).date()
                         return start_date <= d <= end_date
-                    except:
-                        return False
+                    except: return False
                 
-                # 保留「不在」這個區間內的資料 (~ 代表反向)
                 keep_mask = ~existing_df['日期'].apply(is_in_range)
                 df_to_keep = existing_df[keep_mask]
-                
                 deleted_count = len(existing_df) - len(df_to_keep)
-                
                 conn.update(data=df_to_keep)
                 st.cache_data.clear()
                 st.success(f"✅ 已成功刪除 {deleted_count} 筆區間內的資料！")
@@ -187,7 +171,6 @@ with st.sidebar:
                 st.warning("⚠️ 操作失敗：請在上方日曆點選「兩個日期」形成區間。")
                 
         st.write("---")
-        st.caption("⚠️ 終極還原：若需徹底重置所有資料，請點擊下方按鈕。")
         if st.button("💣 徹底清空全部資料庫"):
             conn.update(data=pd.DataFrame(columns=required_cols))
             st.cache_data.clear()
@@ -217,23 +200,52 @@ try:
         c2.metric("剩餘可用資金", f"${rem_capital:,.0f}")
         c3.metric("本金利用率", f"{(used_capital/current_total_capital)*100:.1f}%")
 
+        # --- 全新加入：🎯 停利目標監控區 ---
+        st.write("") # 排版間距
         if not active_df.empty:
-            st.markdown("#### 📡 即時持倉雷達")
-            card_cols = st.columns(3)
+            ready_to_sell = []
+            active_holdings_data = []
+            
+            # 先收集即時數據，判斷是否有達標股票
             for i, (idx, row) in enumerate(active_df.iterrows()):
                 curr_p = get_live_price(row['代號'])
                 if curr_p:
                     p_pct = ((curr_p - row['成本']) / row['成本']) * 100
                     p_twd = (curr_p - row['成本']) * row['股數']
-                    with card_cols[i % 3]:
-                        st.markdown(f"""
-                        <div style="padding:15px; background:white; border-radius:10px; border: 1px solid #ddd; border-left: 5px solid {'#ef5350' if p_pct>=10 else '#2196f3'};">
-                            <h4 style="margin:0;">{row['標的']} ({row['代號']})</h4>
-                            <p style="margin:5px 0; color:gray; font-size:14px;">均價: ${row['成本']} | 現價: ${curr_p:.2f}</p>
-                            <h3 style="margin:0; color:{'#ef5350' if p_pct>0 else '#26a69a'};">{'+' if p_pct>0 else ''}{p_pct:.2f}% (${p_twd:,.0f})</h3>
-                        </div>
-                        """, unsafe_allow_html=True)
-                        if p_pct >= 10: st.error(f"🚨 **{row['標的']}** 已達 10% 停利目標！")
+                    active_holdings_data.append({
+                        '標的': row['標的'], '代號': row['代號'], '成本': row['成本'], 
+                        '現價': curr_p, '漲跌%': p_pct, '損益TWD': p_twd
+                    })
+                    if p_pct >= 10:
+                        ready_to_sell.append(f"{row['標的']} (+{p_pct:.1f}%)")
+            
+            # 顯示「獵物鎖定」警報器
+            if ready_to_sell:
+                st.markdown(f"""
+                <div style="padding: 15px; border-radius: 8px; background-color: #ffebee; border-left: 5px solid #ef5350; margin-bottom: 20px;">
+                    <h4 style="margin-top: 0; color: #c62828;">🎯 停利達標警報：有 {len(ready_to_sell)} 檔股票可結算出場！</h4>
+                    <p style="margin-bottom: 0; font-size: 16px; color: #b71c1c;"><b>👉 可賣出清單：</b> {', '.join(ready_to_sell)}</p>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown("""
+                <div style="padding: 15px; border-radius: 8px; background-color: #f8f9fa; border-left: 5px solid #bdbdbd; margin-bottom: 20px;">
+                    <p style="margin: 0; color: #555; font-size: 16px;">🎯 <b>停利監控：</b> 目前尚無獲利達 10% 的持股，請耐心等候主力抬轎。</p>
+                </div>
+                """, unsafe_allow_html=True)
+
+            # 顯示雷達卡片
+            st.markdown("#### 📡 即時持倉雷達")
+            card_cols = st.columns(3)
+            for i, data in enumerate(active_holdings_data):
+                with card_cols[i % 3]:
+                    st.markdown(f"""
+                    <div style="padding:15px; background:white; border-radius:10px; border: 1px solid #ddd; border-left: 5px solid {'#ef5350' if data['漲跌%']>=10 else '#2196f3'};">
+                        <h4 style="margin:0;">{data['標的']} ({data['代號']})</h4>
+                        <p style="margin:5px 0; color:gray; font-size:14px;">均價: ${data['成本']} | 現價: ${data['現價']:.2f}</p>
+                        <h3 style="margin:0; color:{'#ef5350' if data['漲跌%']>0 else '#26a69a'};">{'+' if data['漲跌%']>0 else ''}{data['漲跌%']:.2f}% (${data['損益TWD']:,.0f})</h3>
+                    </div>
+                    """, unsafe_allow_html=True)
         st.divider()
 
         # ==========================================
