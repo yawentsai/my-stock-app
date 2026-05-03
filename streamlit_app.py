@@ -9,10 +9,11 @@ import requests
 from bs4 import BeautifulSoup
 import urllib.parse
 
-# 1. 基礎設定與樣式鎖定
+# 1. 基礎設定
 st.set_page_config(page_title="零股追蹤神器", layout="wide")
 st.title("🚀 零股追蹤神器")
 
+# ⚡ 強制鎖定行動端樣式
 st.markdown("""
     <style>
     .dashboard-grid {
@@ -36,13 +37,21 @@ st.markdown("""
         border-radius: 8px !important;
         margin-bottom: 12px !important;
     }
+    /* 獲利通知欄位美化 */
+    .status-box {
+        padding: 12px;
+        border-radius: 8px;
+        margin-bottom: 20px;
+        text-align: center;
+        font-size: 0.95rem;
+        font-weight: 500;
+    }
     </style>
 """, unsafe_allow_html=True)
 
 # 2. 自動刷新 (60秒)
-st_autorefresh(interval=60000, limit=1000, key="global_v84_sync")
+st_autorefresh(interval=60000, limit=1000, key="global_v85_sync")
 
-# 💡 初始本金
 INITIAL_CAPITAL = 100000
 conn = st.connection("gsheets", type=GSheetsConnection)
 
@@ -81,7 +90,7 @@ except:
 for col in ['成本', '股數', '投入金額', '賣出價', '實現損益', '漲跌%']:
     existing_df[col] = pd.to_numeric(existing_df[col], errors='coerce').fillna(0.0)
 
-# --- 側邊欄：進階操作流 ---
+# --- 側邊欄：功能全對稱 ---
 with st.sidebar:
     st.header("⚡ 系統控制區")
     
@@ -111,50 +120,40 @@ with st.sidebar:
 
     st.divider()
 
-    with st.expander("🛒 實單庫存：買入", expanded=False):
+    with st.expander("🛒 實單庫存：買入登錄"):
         with st.form("buy_f"):
             br_date = st.date_input("日期", value=date.today())
             br_n, br_s = st.text_input("名稱"), st.text_input("代號")
             br_p = st.number_input("均價", min_value=0.0); br_q = st.number_input("股數", min_value=1, value=100)
-            if st.form_submit_button("✅ 買進登錄"):
+            if st.form_submit_button("✅ 加入持倉"):
                 new_r = pd.DataFrame([{"日期": br_date.strftime("%m/%d"), "標的": br_n, "代號": br_s, "操作": "買進", "成本": float(br_p), "股數": int(br_q), "投入金額": br_p*br_q, "漲跌%": 0.0, "盤後紀錄": "實單持倉中"}])
                 conn.update(data=pd.concat([existing_df, new_r], ignore_index=True)); st.cache_data.clear(); st.rerun()
 
-    # 💡 核心更新：賣出結算 (支援減碼股數)
-    with st.expander("💸 實單庫存：賣出結算", expanded=True):
+    with st.expander("💸 實單庫存：賣出結算"):
         active_h = existing_df[existing_df['盤後紀錄'] == "實單持倉中"]
         if not active_h.empty:
             with st.form("sell_f"):
-                sel = st.selectbox("選取要結算的持倉", active_h.apply(lambda x: f"{x['日期']} - {x['標的']}", axis=1))
+                sel = st.selectbox("選取結算對象", active_h.apply(lambda x: f"{x['日期']} - {x['標的']}", axis=1))
                 sr_p = st.number_input("賣出單價", min_value=0.0)
-                # 找出當前選中標的的持有股數
                 sd_sel, sn_sel = sel.split(" - ", 1)
                 curr_row = existing_df[(existing_df['日期']==sd_sel) & (existing_df['標的']==sn_sel)].iloc[0]
                 sr_q = st.number_input(f"賣出股數 (持有: {int(curr_row['股數'])})", min_value=1, max_value=int(curr_row['股數']), value=int(curr_row['股數']))
-                sr_n = st.text_input("出場回饋 (選填)")
+                sr_n = st.text_input("出場筆記")
                 if st.form_submit_button("💰 結算獲利"):
                     idx = existing_df[(existing_df['日期']==sd_sel) & (existing_df['標的']==sn_sel)].index[0]
                     cp, q_orig = existing_df.at[idx, '成本'], existing_df.at[idx, '股數']
-                    
-                    if sr_q < q_orig: # 部分減碼
-                        # 1. 建立一筆「已實現」的新紀錄
-                        new_sold_row = existing_df.loc[[idx]].copy()
-                        new_sold_row['股數'] = sr_q
-                        new_sold_row['投入金額'] = cp * sr_q
-                        new_sold_row['賣出價'] = sr_p
-                        new_sold_row['實現損益'] = (sr_p - cp) * sr_q
-                        new_sold_row['漲跌%'] = ((sr_p - cp)/cp)*100
-                        new_sold_row['盤後紀錄'] = f"減碼結算：{sr_n}"
-                        # 2. 修改原本紀錄的剩餘股數
+                    if sr_q < q_orig:
+                        new_sold = existing_df.loc[[idx]].copy()
+                        new_sold['股數'], new_sold['投入金額'], new_sold['賣出價'] = sr_q, cp * sr_q, sr_p
+                        new_sold['實現損益'], new_sold['漲跌%'], new_sold['盤後紀錄'] = (sr_p - cp) * sr_q, ((sr_p - cp)/cp)*100, f"減碼：{sr_n}"
                         existing_df.at[idx, '股數'] = q_orig - sr_q
                         existing_df.at[idx, '投入金額'] = cp * (q_orig - sr_q)
-                        existing_df = pd.concat([existing_df, new_sold_row], ignore_index=True)
-                    else: # 全數賣出
+                        existing_df = pd.concat([existing_df, new_sold], ignore_index=True)
+                    else:
                         existing_df.at[idx, '賣出價'], existing_df.at[idx, '實現損益'] = sr_p, (sr_p - cp) * q_orig
-                        existing_df.at[idx, '漲跌%'], existing_df.at[idx, '盤後紀錄'] = ((sr_p - cp)/cp)*100, f"實單結算：{sr_n}"
-                    
+                        existing_df.at[idx, '漲跌%'], existing_df.at[idx, '盤後紀錄'] = ((sr_p - cp)/cp)*100, f"清倉：{sr_n}"
                     conn.update(data=existing_df); st.cache_data.clear(); st.rerun()
-        else: st.info("目前無在手持倉。")
+        else: st.info("目前無在庫持倉。")
 
     st.divider()
 
@@ -196,7 +195,11 @@ try:
     p_c = "#1b5e20" if total_profit >= 0 else "#b71c1c"; p_b = "#e8f5e9" if total_profit >= 0 else "#ffebee"
     st.markdown(f"""<div class="dashboard-grid"><div class="metric-card"><div class="metric-label">總資產權益</div><div class="metric-value">${equity:,.0f}</div></div><div class="metric-card" style="background:{p_b}; border-color:{p_c}22;"><div class="metric-label" style="color:{p_c};">🎯 累計獲利</div><div class="metric-value" style="color:{p_c};">${total_profit:,.0f}</div></div><div class="metric-card"><div class="metric-label">📈 ROI</div><div class="metric-value">{(total_profit/INITIAL_CAPITAL)*100:.2f}%</div></div><div class="metric-card" style="background:#fff3e0;"><div class="metric-label" style="color:#e65100;">已投入資金</div><div class="metric-value" style="color:#e65100;">${used_cap:,.0f}</div></div><div class="metric-card"><div class="metric-label">可用現金</div><div class="metric-value">${rem_cap:,.0f}</div></div><div class="metric-card"><div class="metric-label">利用率</div><div class="metric-value">{(used_cap/(INITIAL_CAPITAL+total_realized))*100:.1f}%</div></div></div>""", unsafe_allow_html=True)
 
-    if ready_to_sell: st.error(f"🚨 停利提示：{', '.join(ready_to_sell)}")
+    # 💡 補回獲利通知：標達標就亮紅，沒標就亮綠
+    if ready_to_sell:
+        st.markdown(f"""<div class="status-box" style="background-color:#ffebee; color:#b71c1c; border:2px solid #ef5350;">🚨 停利標準已達標 ({len(ready_to_sell)} 檔)：{', '.join(ready_to_sell)}</div>""", unsafe_allow_html=True)
+    else:
+        st.markdown("""<div class="status-box" style="background-color:#e8f5e9; color:#2e7d32; border:1px dashed #4caf50;">✅ 目前持股獲利尚未達 10% 停利標準，請繼續耐心持有。</div>""", unsafe_allow_html=True)
 
     # 3. 頁籤功能
     t1, t2, t3, t4 = st.tabs(["💼 實單持股", "📰 即時新聞區", "📅 歷史日誌 (統整)", "🗂️ 個股深度追蹤"])
@@ -233,6 +236,7 @@ try:
                         c = "#ef5350" if row['漲跌%'] > 0 else ("#26a69a" if row['漲跌%'] < 0 else "#bdbdbd")
                         st.markdown(f"<div style='border-left:5px solid {c}; padding:10px; background:#f8f9fa; margin-bottom:10px; border-radius:4px;'><b>{row['日期']} | <span style='color:{c};'>{row['漲跌%']:.2f}%</span></b><br><small>🔍 {row['盤前觀察']}</small><br><small>📝 {row['盤後紀錄']}</small></div>", unsafe_allow_html=True)
 
+    # 4. 底部勝率與圓餅圖
     st.divider()
     c_buy = completed[completed['操作'] == '買進']
     w_r = (len(c_buy[c_buy['漲跌%'] > 0]) / len(c_buy) * 100) if not c_buy.empty else 0.0
