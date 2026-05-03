@@ -9,9 +9,9 @@ import requests
 from bs4 import BeautifulSoup
 import urllib.parse
 
-# 1. 標題與設定
+# 1. 標題與設定 (已移除版本號與括號)
 st.set_page_config(page_title="零股追蹤神器", layout="wide")
-st.title("🚀 零股追蹤神器 7.1 (清單管理版)")
+st.title("🚀 零股追蹤神器")
 
 # 2. 每 60 秒自動刷新
 st_autorefresh(interval=60000, limit=1000, key="global_refresh")
@@ -62,27 +62,20 @@ for col in ['成本', '股數', '投入金額', '賣出價', '實現損益']:
 with st.sidebar:
     st.header("⚡ 系統控制區")
     
-    # [新增] 刪除選項邏輯
     with st.expander("🗑️ 管理/刪除追蹤標的", expanded=False):
-        # 找出所有操作為 '追蹤' 的股票
         tracking_targets = existing_df[existing_df['操作'] == '追蹤']['標的'].unique()
         if len(tracking_targets) > 0:
             del_target = st.selectbox("選取要移除的新聞標的", tracking_targets)
             if st.button("🚨 確認刪除追蹤"):
-                # 執行刪除：過濾掉該標的且操作為追蹤的行
                 new_df = existing_df[~((existing_df['標的'] == del_target) & (existing_df['操作'] == '追蹤'))]
-                conn.update(data=new_df)
-                st.cache_data.clear()
-                st.success(f"已成功刪除 {del_target} 的追蹤！")
-                st.rerun()
-        else:
-            st.info("目前沒有純新聞追蹤的標的。")
+                conn.update(data=new_df); st.cache_data.clear(); st.success(f"已成功刪除 {del_target}！"); st.rerun()
+        else: st.info("目前無純新聞追蹤標的。")
             
     st.divider()
 
     with st.expander("🔔 訂閱新聞追蹤", expanded=True):
         with st.form("news_form", clear_on_submit=True):
-            n_name = st.text_input("股票名稱 (如: 京元電子)")
+            n_name = st.text_input("股票名稱")
             n_symbol = st.text_input("代號 (選填)")
             if st.form_submit_button("📡 開始追蹤") and n_name:
                 new_row = pd.DataFrame([{"日期": date.today().strftime("%m/%d"), "標的": n_name.strip(), "代號": n_symbol.strip(), "操作": "追蹤", "盤後紀錄": "僅新聞追蹤"}])
@@ -138,7 +131,7 @@ try:
     used_cap = active_df['投入金額'].sum()
     rem_cap = (INITIAL_CAPITAL + total_realized) - used_cap
 
-    # 1. 核心看板
+    # 1. 核心看板 (1.5倍大字)
     st.markdown("### 🏦 真實資產結算看板")
     p_c = "#1b5e20" if total_profit >= 0 else "#b71c1c"; p_b = "#e8f5e9" if total_profit >= 0 else "#ffebee"
     st.markdown(f"""<div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; margin-bottom:20px;"><div style="background:#f8f9fa; padding:15px 10px; border-radius:8px; text-align:center; border:1px solid #ddd;"><div style="font-size:1.05rem; color:#555;">總資產權益</div><div style="font-size:1.45rem; font-weight:bold;">${equity:,.0f}</div></div><div style="background:{p_b}; padding:15px 10px; border-radius:8px; text-align:center; border:1px solid #ddd;"><div style="font-size:1.05rem; color:{p_c};">🎯 累計獲利</div><div style="font-size:1.45rem; font-weight:bold; color:{p_c};">${total_profit:,.0f}</div></div><div style="background:#f8f9fa; padding:15px 10px; border-radius:8px; text-align:center; border:1px solid #ddd;"><div style="font-size:1.05rem; color:#555;">📈 ROI</div><div style="font-size:1.45rem; font-weight:bold;">{(total_profit/INITIAL_CAPITAL)*100:.2f}%</div></div><div style="background:#fff3e0; padding:15px 10px; border-radius:8px; text-align:center; border:1px solid #ddd;"><div style="font-size:1.05rem; color:#e65100;">已投入資金</div><div style="font-size:1.45rem; font-weight:bold; color:#e65100;">${used_cap:,.0f}</div></div><div style="background:#f8f9fa; padding:15px 10px; border-radius:8px; text-align:center; border:1px solid #ddd;"><div style="font-size:1.05rem; color:#555;">可用現金</div><div style="font-size:1.45rem; font-weight:bold;">${rem_cap:,.0f}</div></div><div style="background:#f8f9fa; padding:15px 10px; border-radius:8px; text-align:center; border:1px solid #ddd;"><div style="font-size:1.05rem; color:#555;">利用率</div><div style="font-size:1.45rem; font-weight:bold;">{(used_cap/(INITIAL_CAPITAL+total_realized))*100:.1f}%</div></div></div>""", unsafe_allow_html=True)
@@ -149,7 +142,7 @@ try:
     else:
         st.markdown("<div style='padding:10px; border-radius:8px; background-color:#f1f3f4; border:1px dashed #999; margin-bottom:20px; text-align:center;'><span style='color:#666; font-size:0.9rem;'>✅ 目前持股獲利尚未達 10% 停利標準，請繼續耐心持有。</span></div>", unsafe_allow_html=True)
 
-    # 3. 頁籤與回歸樣式
+    # 3. 頁籤與樣式
     t1, t2, t3, t4 = st.tabs(["💼 實單持股", "📰 即時新聞區", "📅 歷史日誌", "🗂️ 個股深度追蹤"])
     
     with t1:
@@ -158,14 +151,13 @@ try:
         else: st.info("目前無持倉紀錄。")
 
     with t2:
-        # 新聞追蹤清單 = 正在持有股票 + 訂閱追蹤標的
         news_watchlist = sorted(list(set(list(active_df['標的'].unique()) + list(existing_df[existing_df['操作'] == '追蹤']['標的'].unique()))))
         if news_watchlist:
             for s in news_watchlist:
                 with st.expander(f"📢 {s} - 情報監控", expanded=True):
-                    news_data = fetch_stock_news(s)
-                    if news_data:
-                        for n in news_data:
+                    n_data = fetch_stock_news(s)
+                    if n_data:
+                        for n in n_data:
                             st.markdown(f"<div style='padding:8px; border-bottom:1px solid #eee;'><a href='{n['連結']}' target='_blank' style='text-decoration:none; color:#1e88e5; font-weight:bold;'>{n['標題']}</a><br><small style='color:gray;'>{n['來源']} | {n['發布']}</small></div>", unsafe_allow_html=True)
                     else: st.write("⏳ 目前尚無近 3 日相關新聞。")
         else: st.info("請在側邊欄訂閱標的以開始監控新聞。")
@@ -197,4 +189,4 @@ try:
         fig = px.pie(df, names='操作', hole=0.4, color='操作', color_discrete_map={'買進':'#2196f3', '觀察':'#bdbdbd', '追蹤':'#ffeb3b'})
         fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=300); st.plotly_chart(fig, use_container_width=True)
 
-except Exception as e: st.info(f"載入中... ({e})")
+except Exception as e: st.info(f"系統初始化中... ({e})")
