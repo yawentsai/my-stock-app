@@ -5,8 +5,8 @@ import plotly.express as px
 from datetime import datetime
 import yfinance as yf
 
-st.set_page_config(page_title="交易戰情室 4.8", layout="wide")
-st.title("🎯 交易戰情室 4.8 (交易紀律版)")
+st.set_page_config(page_title="交易戰情室 4.9", layout="wide")
+st.title("🎯 交易戰情室 4.9 (終極財務報表版)")
 
 # 💡 初始本金設定
 INITIAL_CAPITAL = 100000
@@ -39,7 +39,6 @@ try:
 except Exception:
     existing_df = pd.DataFrame(columns=['日期', '標的', '代號', '操作', '成本', '股數', '投入金額', '漲跌%', '盤前觀察', '盤後紀錄', '賣出價', '實現損益'])
 
-# 強制轉型確保計算正確
 for col in ['成本', '股數', '投入金額', '漲跌%', '賣出價', '實現損益']:
     existing_df[col] = pd.to_numeric(existing_df[col], errors='coerce').fillna(0.0)
 
@@ -184,39 +183,59 @@ try:
 
     if not df.empty:
         # ==========================================
-        # 模塊 1：💰 總資產與實單監控
+        # 模塊 1：💰 總資產與財務報表監控
         # ==========================================
+        # 1. 提取已實現與準備數據
         total_realized_pnl = df['實現損益'].sum()
-        current_total_capital = INITIAL_CAPITAL + total_realized_pnl
-        
         active_df = df[(df['操作'] == '買進') & (df['盤後紀錄'] == '實單持倉中')]
         used_capital = active_df['投入金額'].sum() if not active_df.empty else 0
-        rem_capital = current_total_capital - used_capital
         
+        # 2. 計算即時未實現損益
+        total_unrealized_pnl = 0
+        active_holdings_data = []
+        ready_to_sell = []
+        
+        for i, (idx, row) in enumerate(active_df.iterrows()):
+            curr_p = get_live_price(row['代號'])
+            if curr_p:
+                p_pct = ((curr_p - row['成本']) / row['成本']) * 100
+                p_twd = (curr_p - row['成本']) * row['股數']
+                total_unrealized_pnl += p_twd
+                active_holdings_data.append({
+                    '標的': row['標的'], '代號': row['代號'], '成本': row['成本'], 
+                    '現價': curr_p, '漲跌%': p_pct, '損益TWD': p_twd
+                })
+                if p_pct >= 10:
+                    ready_to_sell.append(f"{row['標的']} (+{p_pct:.1f}%)")
+                    
+        # 3. 結算總財務數據
+        total_profit = total_realized_pnl + total_unrealized_pnl
+        current_total_equity = INITIAL_CAPITAL + total_profit
+        cash_pool = INITIAL_CAPITAL + total_realized_pnl
+        rem_capital = cash_pool - used_capital
+        utilization_rate = (used_capital / cash_pool) * 100 if cash_pool > 0 else 0
+
+        # --- 全新 2x3 財務報表排版 ---
         st.markdown("### 🏦 真實資產結算看板")
-        c0, c1, c2, c3 = st.columns(4)
-        c0.metric("目前總資產 (包含獲利)", f"${current_total_capital:,.0f}", f"{total_realized_pnl:,.0f} (累計損益)")
-        c1.metric("已投入資金", f"${used_capital:,.0f}")
-        c2.metric("剩餘可用資金", f"${rem_capital:,.0f}")
-        c3.metric("本金利用率", f"{(used_capital/current_total_capital)*100:.1f}%")
+        
+        # 上層：績效表現
+        c1, c2, c3 = st.columns(3)
+        c1.metric("總資產權益 (含未實現)", f"${current_total_equity:,.0f}")
+        c2.metric("🎯 累計總獲利 (金額)", f"${total_profit:,.0f}", f"已結算: ${total_realized_pnl:,.0f} | 帳面: ${total_unrealized_pnl:,.0f}")
+        c3.metric("📈 總報酬率 (ROI)", f"{(total_profit/INITIAL_CAPITAL)*100:.2f}%")
+        
+        st.write("") # 間距
+        
+        # 下層：資金控管
+        c4, c5, c6 = st.columns(3)
+        c4.metric("已投入資金 (持倉成本)", f"${used_capital:,.0f}")
+        c5.metric("剩餘可用現金", f"${rem_capital:,.0f}")
+        c6.metric("本金利用率", f"{utilization_rate:.1f}%")
 
         st.write("") 
+        
+        # --- 停利目標監控區 ---
         if not active_df.empty:
-            ready_to_sell = []
-            active_holdings_data = []
-            
-            for i, (idx, row) in enumerate(active_df.iterrows()):
-                curr_p = get_live_price(row['代號'])
-                if curr_p:
-                    p_pct = ((curr_p - row['成本']) / row['成本']) * 100
-                    p_twd = (curr_p - row['成本']) * row['股數']
-                    active_holdings_data.append({
-                        '標的': row['標的'], '代號': row['代號'], '成本': row['成本'], 
-                        '現價': curr_p, '漲跌%': p_pct, '損益TWD': p_twd
-                    })
-                    if p_pct >= 10:
-                        ready_to_sell.append(f"{row['標的']} (+{p_pct:.1f}%)")
-            
             if ready_to_sell:
                 st.markdown(f"""
                 <div style="padding: 15px; border-radius: 8px; background-color: #ffebee; border-left: 5px solid #ef5350; margin-bottom: 20px;">
@@ -245,17 +264,15 @@ try:
         st.divider()
 
         # ==========================================
-        # 模塊 2：🎯 歷史預判勝率與覆盤日誌
+        # 模塊 2：🎯 歷史預判與覆盤日誌
         # ==========================================
         st.markdown("### 🎯 歷史預判與覆盤日誌")
         completed_df = df[~df['盤後紀錄'].isin(["⏳ 等待盤後更新...", "實單持倉中"])].copy()
         
         if not completed_df.empty:
-            # 勝率依然用「買進」的部分來算
             b_df = completed_df[completed_df['操作'] == '買進']
             win_r = (len(b_df[b_df['漲跌%'] > 0]) / len(b_df) * 100) if len(b_df) > 0 else 0
             
-            # 圓餅圖改為顯示「買進」與「未買進(觀察)」的比例
             completed_df['動作標籤'] = completed_df['操作'].apply(lambda x: '買進' if x == '買進' else '未買進')
             
             c_w1, c_w2 = st.columns([1, 2])
@@ -263,7 +280,7 @@ try:
                 st.metric("📊 實際買進預判勝率", f"{win_r:.1f}%")
             with c_w2:
                 fig = px.pie(completed_df, names='動作標籤', hole=0.4, color='動作標籤', 
-                             color_discrete_map={'買進':'#ef5350', '未買進':'#bdbdbd'}) # 買進為紅色，未買進為灰色
+                             color_discrete_map={'買進':'#ef5350', '未買進':'#bdbdbd'})
                 fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=200)
                 st.plotly_chart(fig, use_container_width=True)
 
