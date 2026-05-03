@@ -5,8 +5,8 @@ import plotly.express as px
 from datetime import datetime, date
 import yfinance as yf
 
-st.set_page_config(page_title="交易戰情室 5.3", layout="wide")
-st.title("🎯 交易戰情室 5.3 (期初持股初始化版)")
+st.set_page_config(page_title="交易戰情室 5.4", layout="wide")
+st.title("🎯 交易戰情室 5.4 (手機排版優化版)")
 
 # 💡 初始本金設定
 INITIAL_CAPITAL = 100000
@@ -49,7 +49,6 @@ with st.sidebar:
     with st.expander("🛒 買進/初始化持股", expanded=True):
         with st.form("buy_form", clear_on_submit=True):
             st.caption("輸入現有持股時，請填寫當時的『真實平均成本』")
-            # 💡 [新增] 讓妳可以選買進日期
             init_date = st.date_input("買進日期", value=date.today())
             col1, col2 = st.columns(2)
             with col1: buy_name = st.text_input("名稱 (如: 晶技)")
@@ -180,20 +179,49 @@ try:
         rem_capital = cash_pool - used_capital
         util_rate = (used_capital / cash_pool) * 100 if cash_pool > 0 else 0
 
-        # --- 顯示看板 ---
+        # --- 💡 全新：緊湊型手機網格看板 ---
         st.markdown("### 🏦 真實資產結算看板")
-        c1, c2, c3 = st.columns(3)
-        c1.metric("總資產權益", f"${current_total_equity:,.0f}")
-        c2.metric("🎯 累計總獲利", f"${total_profit:,.0f}", f"結算: ${total_realized_pnl:,.0f}")
-        c3.metric("📈 總報酬率 (ROI)", f"{(total_profit/INITIAL_CAPITAL)*100:.2f}%")
         
-        c4, c5, c6 = st.columns(3)
-        c4.metric("已投入資金", f"${used_capital:,.0f}")
-        c5.metric("可用現金", f"${rem_capital:,.0f}")
-        c6.metric("資金利用率", f"{util_rate:.1f}%")
+        profit_color = "#1b5e20" if total_profit >= 0 else "#b71c1c"
+        profit_bg = "#e8f5e9" if total_profit >= 0 else "#ffebee"
+        
+        dashboard_html = f"""
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 20px;">
+            <div style="background: #f8f9fa; padding: 10px; border-radius: 8px; text-align: center; border: 1px solid #e0e0e0;">
+                <div style="font-size: 0.75rem; color: #555;">總資產權益</div>
+                <div style="font-size: 1.1rem; font-weight: bold; color: #222;">${current_total_equity:,.0f}</div>
+            </div>
+            <div style="background: {profit_bg}; padding: 10px; border-radius: 8px; text-align: center; border: 1px solid #e0e0e0;">
+                <div style="font-size: 0.75rem; color: {profit_color};">🎯 累計獲利</div>
+                <div style="font-size: 1.1rem; font-weight: bold; color: {profit_color};">${total_profit:,.0f}</div>
+            </div>
+            <div style="background: #f8f9fa; padding: 10px; border-radius: 8px; text-align: center; border: 1px solid #e0e0e0;">
+                <div style="font-size: 0.75rem; color: #555;">📈 ROI</div>
+                <div style="font-size: 1.1rem; font-weight: bold; color: #222;">{(total_profit/INITIAL_CAPITAL)*100:.2f}%</div>
+            </div>
+            <div style="background: #fff3e0; padding: 10px; border-radius: 8px; text-align: center; border: 1px solid #e0e0e0;">
+                <div style="font-size: 0.75rem; color: #e65100;">已投入資金</div>
+                <div style="font-size: 1.1rem; font-weight: bold; color: #e65100;">${used_capital:,.0f}</div>
+            </div>
+            <div style="background: #f8f9fa; padding: 10px; border-radius: 8px; text-align: center; border: 1px solid #e0e0e0;">
+                <div style="font-size: 0.75rem; color: #555;">可用現金</div>
+                <div style="font-size: 1.1rem; font-weight: bold; color: #222;">${rem_capital:,.0f}</div>
+            </div>
+            <div style="background: #f8f9fa; padding: 10px; border-radius: 8px; text-align: center; border: 1px solid #e0e0e0;">
+                <div style="font-size: 0.75rem; color: #555;">資金利用率</div>
+                <div style="font-size: 1.1rem; font-weight: bold; color: #222;">{util_rate:.1f}%</div>
+            </div>
+        </div>
+        """
+        st.markdown(dashboard_html, unsafe_allow_html=True)
 
         if ready_to_sell:
-            st.error(f"🎯 停利警報：{', '.join(ready_to_sell)}")
+            st.markdown(f"""
+            <div style="padding: 12px; border-radius: 8px; background-color: #ffebee; border-left: 5px solid #ef5350; margin-bottom: 20px;">
+                <h5 style="margin-top: 0; margin-bottom: 5px; color: #c62828;">🎯 停利警報：</h5>
+                <p style="margin-bottom: 0; font-size: 14px; color: #b71c1c;">{', '.join(ready_to_sell)}</p>
+            </div>
+            """, unsafe_allow_html=True)
 
         # --- 頁籤 ---
         tab1, tab2, tab3 = st.tabs(["💼 實單持股明細", "📅 依【日期】盤後日誌", "🗂️ 依【個股】深度追蹤"])
@@ -215,14 +243,33 @@ try:
                         d_df = m_df[m_df['日期'] == date_str]
                         with st.expander(f"📅 {date_str}"):
                             for _, row in d_df.iterrows():
-                                st.write(f"{row['操作']} {row['標的']} : {row['漲跌%']}%")
+                                action_badge = f"<span style='background-color:#ef5350; color:white; padding:2px 6px; border-radius:4px; font-size:0.8rem;'>{row['操作']}</span>"
+                                result_color = "#ef5350" if row['漲跌%'] > 0 else ("#26a69a" if row['漲跌%'] < 0 else "gray")
+                                st.markdown(f"""
+                                <div style="padding:8px; border-bottom:1px solid #eee;">
+                                    {action_badge} <strong>{row['標的']}</strong> 
+                                    <span style="color:{result_color}; float:right; font-weight:bold;">{row['漲跌%']}%</span><br>
+                                    <span style="color:#666; font-size:0.85rem;">📝 {row['盤後紀錄']}</span>
+                                </div>
+                                """, unsafe_allow_html=True)
             else: st.info("尚無歷史日誌。")
 
         with tab3:
             if not completed_df.empty:
                 for target in sorted(completed_df['標的'].unique()):
                     with st.expander(f"📌 {target}"):
-                        st.write(completed_df[completed_df['標的'] == target])
+                        t_df = completed_df[completed_df['標的'] == target].sort_values(by='日期', ascending=False)
+                        for _, row in t_df.iterrows():
+                            color = "#ef5350" if row['漲跌%'] > 0 else ("#26a69a" if row['漲跌%'] < 0 else "#bdbdbd")
+                            st.markdown(f"""
+                            <div style="border-left:5px solid {color}; padding:10px; background:#f8f9fa; margin-bottom:10px;">
+                                <b>{row['日期']} | {row['操作']} | <span style="color:{color};">{row['漲跌%']}%</span></b><br>
+                                <div style="margin-top:6px; font-size:0.95rem;">
+                                    <span style="color:#555;">🔍 <b>盤前：</b> {row['盤前觀察']}</span><br>
+                                    <span style="color:#222;">📝 <b>盤後：</b> {row['盤後紀錄']}</span>
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
 
         # 圓餅圖
         if not completed_df.empty:
