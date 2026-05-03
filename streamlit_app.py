@@ -9,7 +9,7 @@ import requests
 from bs4 import BeautifulSoup
 import urllib.parse
 
-# 1. 基礎設定與手機版樣式鎖定
+# 1. 基礎設定與樣式鎖定
 st.set_page_config(page_title="零股追蹤神器", layout="wide")
 st.title("🚀 零股追蹤神器")
 
@@ -40,8 +40,9 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # 2. 自動刷新 (60秒)
-st_autorefresh(interval=60000, limit=1000, key="global_sync")
+st_autorefresh(interval=60000, limit=1000, key="global_v84_sync")
 
+# 💡 初始本金
 INITIAL_CAPITAL = 100000
 conn = st.connection("gsheets", type=GSheetsConnection)
 
@@ -80,13 +81,12 @@ except:
 for col in ['成本', '股數', '投入金額', '賣出價', '實現損益', '漲跌%']:
     existing_df[col] = pd.to_numeric(existing_df[col], errors='coerce').fillna(0.0)
 
-# --- 側邊欄：對稱操作流 ---
+# --- 側邊欄：進階操作流 ---
 with st.sidebar:
     st.header("⚡ 系統控制區")
     
-    # 1. 盤前/盤後 對稱
-    with st.expander("🌅 Step 1: 盤前計畫", expanded=False):
-        with st.form("pre_market", clear_on_submit=True):
+    with st.expander("🌅 Step 1: 盤前計畫"):
+        with st.form("pre_m", clear_on_submit=True):
             p_date = st.text_input("日期", value=date.today().strftime("%m/%d"))
             p_action = st.selectbox("性質", ["觀察", "✅ 買進"])
             p_name = st.text_input("股票名稱*")
@@ -96,10 +96,10 @@ with st.sidebar:
                 new_r = pd.DataFrame([{"日期": p_date, "標的": p_name.strip(), "代號": p_symbol.strip(), "操作": "買進" if "買進" in p_action else "觀察", "成本": 0.0, "股數": 0, "投入金額": 0.0, "漲跌%": 0.0, "盤前觀察": p_pre, "盤後紀錄": "⏳ 等待更新...", "賣出價": 0.0, "實現損益": 0.0}])
                 conn.update(data=pd.concat([existing_df, new_r], ignore_index=True)); st.cache_data.clear(); st.rerun()
 
-    with st.expander("🌇 Step 2: 盤後統整", expanded=False):
+    with st.expander("🌇 Step 2: 盤後統整"):
         waiting = existing_df[existing_df['盤後紀錄'] == "⏳ 等待更新..."]
         if not waiting.empty:
-            with st.form("post_market", clear_on_submit=True):
+            with st.form("post_m", clear_on_submit=True):
                 target = st.selectbox("選取標的", waiting.apply(lambda x: f"{x['日期']} - {x['標的']}", axis=1))
                 res_pct = st.number_input("漲跌 %", step=0.01, format="%.2f")
                 res_post = st.text_area("📝 盤後回饋")
@@ -111,9 +111,8 @@ with st.sidebar:
 
     st.divider()
 
-    # 2. 買入/賣出 對稱
-    with st.expander("🛒 實單庫存：買入", expanded=True):
-        with st.form("buy_real"):
+    with st.expander("🛒 實單庫存：買入", expanded=False):
+        with st.form("buy_f"):
             br_date = st.date_input("日期", value=date.today())
             br_n, br_s = st.text_input("名稱"), st.text_input("代號")
             br_p = st.number_input("均價", min_value=0.0); br_q = st.number_input("股數", min_value=1, value=100)
@@ -121,37 +120,54 @@ with st.sidebar:
                 new_r = pd.DataFrame([{"日期": br_date.strftime("%m/%d"), "標的": br_n, "代號": br_s, "操作": "買進", "成本": float(br_p), "股數": int(br_q), "投入金額": br_p*br_q, "漲跌%": 0.0, "盤後紀錄": "實單持倉中"}])
                 conn.update(data=pd.concat([existing_df, new_r], ignore_index=True)); st.cache_data.clear(); st.rerun()
 
-    with st.expander("💸 實單庫存：賣出結算", expanded=False):
+    # 💡 核心更新：賣出結算 (支援減碼股數)
+    with st.expander("💸 實單庫存：賣出結算", expanded=True):
         active_h = existing_df[existing_df['盤後紀錄'] == "實單持倉中"]
         if not active_h.empty:
-            with st.form("sell_real"):
+            with st.form("sell_f"):
                 sel = st.selectbox("選取要結算的持倉", active_h.apply(lambda x: f"{x['日期']} - {x['標的']}", axis=1))
                 sr_p = st.number_input("賣出單價", min_value=0.0)
+                # 找出當前選中標的的持有股數
+                sd_sel, sn_sel = sel.split(" - ", 1)
+                curr_row = existing_df[(existing_df['日期']==sd_sel) & (existing_df['標的']==sn_sel)].iloc[0]
+                sr_q = st.number_input(f"賣出股數 (持有: {int(curr_row['股數'])})", min_value=1, max_value=int(curr_row['股數']), value=int(curr_row['股數']))
                 sr_n = st.text_input("出場回饋 (選填)")
                 if st.form_submit_button("💰 結算獲利"):
-                    sd, sn = sel.split(" - ", 1)
-                    idx = existing_df[(existing_df['日期']==sd) & (existing_df['標的']==sn)].index[0]
-                    cp, q = existing_df.at[idx, '成本'], existing_df.at[idx, '股數']
-                    existing_df.at[idx, '賣出價'], existing_df.at[idx, '實現損益'] = sr_p, (sr_p - cp) * q
-                    existing_df.at[idx, '漲跌%'], existing_df.at[idx, '盤後紀錄'] = ((sr_p - cp)/cp)*100, f"實單結算：{sr_n}"
+                    idx = existing_df[(existing_df['日期']==sd_sel) & (existing_df['標的']==sn_sel)].index[0]
+                    cp, q_orig = existing_df.at[idx, '成本'], existing_df.at[idx, '股數']
+                    
+                    if sr_q < q_orig: # 部分減碼
+                        # 1. 建立一筆「已實現」的新紀錄
+                        new_sold_row = existing_df.loc[[idx]].copy()
+                        new_sold_row['股數'] = sr_q
+                        new_sold_row['投入金額'] = cp * sr_q
+                        new_sold_row['賣出價'] = sr_p
+                        new_sold_row['實現損益'] = (sr_p - cp) * sr_q
+                        new_sold_row['漲跌%'] = ((sr_p - cp)/cp)*100
+                        new_sold_row['盤後紀錄'] = f"減碼結算：{sr_n}"
+                        # 2. 修改原本紀錄的剩餘股數
+                        existing_df.at[idx, '股數'] = q_orig - sr_q
+                        existing_df.at[idx, '投入金額'] = cp * (q_orig - sr_q)
+                        existing_df = pd.concat([existing_df, new_sold_row], ignore_index=True)
+                    else: # 全數賣出
+                        existing_df.at[idx, '賣出價'], existing_df.at[idx, '實現損益'] = sr_p, (sr_p - cp) * q_orig
+                        existing_df.at[idx, '漲跌%'], existing_df.at[idx, '盤後紀錄'] = ((sr_p - cp)/cp)*100, f"實單結算：{sr_n}"
+                    
                     conn.update(data=existing_df); st.cache_data.clear(); st.rerun()
         else: st.info("目前無在手持倉。")
 
     st.divider()
 
-    # 3. 加入/刪除 追蹤對稱
     with st.expander("🔔 加入/管理新聞追蹤"):
-        with st.form("add_news"):
+        with st.form("add_n"):
             an_n, an_s = st.text_input("股票名稱"), st.text_input("代號")
             if st.form_submit_button("📡 開始追蹤") and an_n:
                 new_r = pd.DataFrame([{"日期": date.today().strftime("%m/%d"), "標的": an_n.strip(), "代號": an_s.strip(), "操作": "追蹤", "盤後紀錄": "僅新聞追蹤"}])
                 conn.update(data=pd.concat([existing_df, new_r], ignore_index=True)); st.cache_data.clear(); st.rerun()
-        
         track_list = existing_df[existing_df['操作'] == '追蹤']['標的'].unique()
         if len(track_list) > 0:
-            st.divider()
-            del_t = st.selectbox("選取要刪除的追蹤", track_list)
-            if st.button("🗑️ 確認刪除此追蹤"):
+            del_t = st.selectbox("移除追蹤標的", track_list)
+            if st.button("🗑️ 確認刪除"):
                 new_df = existing_df[~((existing_df['標的'] == del_t) & (existing_df['操作'] == '追蹤'))]
                 conn.update(data=new_df); st.cache_data.clear(); st.rerun()
 
@@ -217,7 +233,6 @@ try:
                         c = "#ef5350" if row['漲跌%'] > 0 else ("#26a69a" if row['漲跌%'] < 0 else "#bdbdbd")
                         st.markdown(f"<div style='border-left:5px solid {c}; padding:10px; background:#f8f9fa; margin-bottom:10px; border-radius:4px;'><b>{row['日期']} | <span style='color:{c};'>{row['漲跌%']:.2f}%</span></b><br><small>🔍 {row['盤前觀察']}</small><br><small>📝 {row['盤後紀錄']}</small></div>", unsafe_allow_html=True)
 
-    # 4. 底部勝率與圓餅圖
     st.divider()
     c_buy = completed[completed['操作'] == '買進']
     w_r = (len(c_buy[c_buy['漲跌%'] > 0]) / len(c_buy) * 100) if not c_buy.empty else 0.0
