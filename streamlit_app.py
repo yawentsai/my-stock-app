@@ -5,12 +5,12 @@ import plotly.express as px
 import re
 from datetime import datetime
 
-st.set_page_config(page_title="個股追蹤戰情室 3.0", layout="wide")
-st.title("🎯 交易戰情室 3.0 (雙軌解析版)")
+st.set_page_config(page_title="交易戰情室 3.1", layout="wide")
+st.title("🎯 交易戰情室 3.1 (強效淨化版)")
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- 側邊欄：批次同步邏輯 (維持最穩定的 2.8 版邏輯) ---
+# --- 側邊欄 ---
 with st.sidebar:
     st.header("📥 批次同步筆記")
     user_input = st.text_area("在此貼上整理好的筆記：", height=400)
@@ -85,14 +85,21 @@ with st.sidebar:
             except Exception as e:
                 st.error(f"解析錯誤：{str(e)}")
 
-# --- 主畫面顯示：雙軌戰情看板 ---
+# --- 主畫面顯示 ---
 try:
     df = conn.read(ttl=0).dropna(subset=['標的'])
+    
+    # 【關鍵強效淨化區】：無論試算表多亂，在顯示前強制清洗
+    df['標的'] = df['標的'].astype(str)
+    # 1. 強制剃除所有數字，解決「國巨2327」的問題
+    df['標的'] = df['標的'].str.replace(r'\d+', '', regex=True).str.strip()
+    # 2. 強制過濾掉異常長度的句子，字數大於 6 的直接隱藏
+    df = df[df['標的'].str.len() <= 6]
+    df = df[df['標的'].str.len() > 0]
+    
     df['漲跌%'] = pd.to_numeric(df['漲跌%'], errors='coerce').fillna(0)
-    df = df[df['標的'].str.len() > 0] 
     
     if not df.empty:
-        # --- 頂部核心指標 ---
         win_rate = (len(df[df['漲跌%'] > 0]) / len(df) * 100)
         st.metric("📊 歷史預判總勝率", f"{win_rate:.1f}%")
         
@@ -103,10 +110,8 @@ try:
 
         st.divider()
 
-        # --- 雙頁籤設計：個股視角 vs 日期視角 ---
         tab1, tab2 = st.tabs(["🗂️ 依【個股】深度追蹤", "📅 依【日期】盤後日誌"])
 
-        # 頁籤 1：依股票名稱瀏覽
         with tab1:
             st.subheader("🔍 個股深度追蹤歷程")
             for target in sorted(df['標的'].unique()):
@@ -124,10 +129,8 @@ try:
                         </div>
                         """, unsafe_allow_html=True)
 
-        # 頁籤 2：依日期瀏覽每日操作
         with tab2:
             st.subheader("📝 每日操作與資金流向總覽")
-            # 確保日期從最新排到最舊
             for date in sorted(df['日期'].unique(), reverse=True):
                 d_df = df[df['日期'] == date]
                 buy_count = len(d_df[d_df['操作'] == '買進'])
