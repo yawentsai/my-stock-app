@@ -4,3 +4,5 @@ pandas
 plotly
 yfinance
 streamlit-autorefresh
+streamlit-autorefresh
+beautifulsoup4
