@@ -7,7 +7,7 @@ import yfinance as yf
 
 # 標題設定
 st.set_page_config(page_title="零股追蹤神器", layout="wide")
-st.title("🚀 零股追蹤神器 6.3")
+st.title("🚀 零股追蹤神器 6.4")
 
 # 💡 初始本金設定
 INITIAL_CAPITAL = 100000
@@ -100,12 +100,7 @@ try:
         p_pct = ((curr_p - row['成本']) / row['成本']) * 100 if curr_p else 0.0
         p_twd = (curr_p - row['成本']) * row['股數'] if curr_p else 0.0
         total_unrealized_pnl += p_twd
-        active_holdings_data.append({
-            '買進日期': row['日期'], '標的名稱': row['標的'], '代號': row['代號'], 
-            '均價': row['成本'], '股數': row['股數'], '投入本金': row['投入金額'], 
-            '即時現價': curr_p if curr_p else "讀取中...", 
-            '損益金額': p_twd, '損益率%': p_pct
-        })
+        active_holdings_data.append({'買進日期': row['日期'], '標的名稱': row['標的'], '代號': row['代號'], '均價': row['成本'], '股數': row['股數'], '投入本金': row['投入金額'], '即時現價': curr_p if curr_p else "讀取中...", '損益金額': p_twd, '損益率%': p_pct})
         if p_pct >= 10: ready_to_sell_names.append(f"{row['標的']} (+{p_pct:.1f}%)")
                 
     total_profit = total_realized_pnl + total_unrealized_pnl
@@ -114,97 +109,69 @@ try:
     rem_capital = cash_pool - used_capital
     util_rate = (used_capital / cash_pool) * 100 if cash_pool > 0 else 0
 
+    # 1. 看板 (大字 1.5 倍)
     st.markdown("### 🏦 真實資產結算看板")
     profit_color = "#1b5e20" if total_profit >= 0 else "#b71c1c"
     profit_bg = "#e8f5e9" if total_profit >= 0 else "#ffebee"
-    
     dashboard_html = f"""
     <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 20px;">
         <div style="background: #f8f9fa; padding: 15px 10px; border-radius: 8px; text-align: center; border: 1px solid #ddd;">
-            <div style="font-size: 1.05rem; color: #555; margin-bottom: 5px;">總資產權益</div>
-            <div style="font-size: 1.45rem; font-weight: bold;">${current_total_equity:,.0f}</div>
+            <div style="font-size: 1.05rem; color: #555; margin-bottom: 5px;">總資產權益</div><div style="font-size: 1.45rem; font-weight: bold;">${current_total_equity:,.0f}</div>
         </div>
         <div style="background: {profit_bg}; padding: 15px 10px; border-radius: 8px; text-align: center; border: 1px solid #ddd;">
-            <div style="font-size: 1.05rem; color: {profit_color}; margin-bottom: 5px;">🎯 累計獲利</div>
-            <div style="font-size: 1.45rem; font-weight: bold; color: {profit_color};">${total_profit:,.0f}</div>
+            <div style="font-size: 1.05rem; color: {profit_color}; margin-bottom: 5px;">🎯 累計獲利</div><div style="font-size: 1.45rem; font-weight: bold; color: {profit_color};">${total_profit:,.0f}</div>
         </div>
         <div style="background: #f8f9fa; padding: 15px 10px; border-radius: 8px; text-align: center; border: 1px solid #ddd;">
-            <div style="font-size: 1.05rem; color: #555; margin-bottom: 5px;">📈 ROI</div>
-            <div style="font-size: 1.45rem; font-weight: bold;">{(total_profit/INITIAL_CAPITAL)*100:.2f}%</div>
+            <div style="font-size: 1.05rem; color: #555; margin-bottom: 5px;">📈 ROI</div><div style="font-size: 1.45rem; font-weight: bold;">{(total_profit/INITIAL_CAPITAL)*100:.2f}%</div>
         </div>
         <div style="background: #fff3e0; padding: 15px 10px; border-radius: 8px; text-align: center; border: 1px solid #ddd;">
-            <div style="font-size: 1.05rem; color: #e65100; margin-bottom: 5px;">已投入資金</div>
-            <div style="font-size: 1.45rem; font-weight: bold; color: #e65100;">${used_capital:,.0f}</div>
+            <div style="font-size: 1.05rem; color: #e65100; margin-bottom: 5px;">已投入資金</div><div style="font-size: 1.45rem; font-weight: bold; color: #e65100;">${used_capital:,.0f}</div>
         </div>
         <div style="background: #f8f9fa; padding: 15px 10px; border-radius: 8px; text-align: center; border: 1px solid #ddd;">
-            <div style="font-size: 1.05rem; color: #555; margin-bottom: 5px;">可用現金</div>
-            <div style="font-size: 1.45rem; font-weight: bold;">${rem_capital:,.0f}</div>
+            <div style="font-size: 1.05rem; color: #555; margin-bottom: 5px;">可用現金</div><div style="font-size: 1.45rem; font-weight: bold;">${rem_capital:,.0f}</div>
         </div>
         <div style="background: #f8f9fa; padding: 15px 10px; border-radius: 8px; text-align: center; border: 1px solid #ddd;">
-            <div style="font-size: 1.05rem; color: #555; margin-bottom: 5px;">利用率</div>
-            <div style="font-size: 1.45rem; font-weight: bold;">{util_rate:.1f}%</div>
+            <div style="font-size: 1.05rem; color: #555; margin-bottom: 5px;">利用率</div><div style="font-size: 1.45rem; font-weight: bold;">{util_rate:.1f}%</div>
         </div>
     </div>
     """
     st.markdown(dashboard_html, unsafe_allow_html=True)
 
-    # 💡 [修復：達標提示欄位回歸]
+    # 2. 停利提示
     if ready_to_sell_names:
-        st.markdown(f"""
-        <div style="padding: 15px; border-radius: 8px; background-color: #ffebee; border: 2px solid #ef5350; margin-bottom: 20px;">
-            <h4 style="margin-top: 0; color: #c62828;">🚨 停利標準已達標 ({len(ready_to_sell_names)} 檔)</h4>
-            <p style="margin-bottom: 0; font-size: 1.1rem; color: #b71c1c; font-weight: bold;">👉 可賣出：{', '.join(ready_to_sell_names)}</p>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(f"<div style='padding:15px; border-radius:8px; background-color:#ffebee; border:2px solid #ef5350; margin-bottom:20px;'><h4 style='margin-top:0; color:#c62828;'>🚨 停利標準已達標 ({len(ready_to_sell_names)} 檔)</h4><p style='margin-bottom:0; font-size:1.1rem; color:#b71c1c; font-weight:bold;'>👉 可賣出：{', '.join(ready_to_sell_names)}</p></div>", unsafe_allow_html=True)
     else:
-        # 當沒有股票達標時，顯示灰色提示框
-        st.markdown("""
-        <div style="padding: 10px; border-radius: 8px; background-color: #f1f3f4; border: 1px dashed #999; margin-bottom: 20px; text-align: center;">
-            <span style="color: #666; font-size: 0.9rem;">✅ 目前持股獲利尚未達 10% 停利標準，請繼續耐心持有。</span>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown("<div style='padding:10px; border-radius:8px; background-color:#f1f3f4; border:1px dashed #999; margin-bottom:20px; text-align:center;'><span style='color:#666; font-size:0.9rem;'>✅ 目前持股獲利尚未達 10% 停利標準，請繼續耐心持有。</span></div>", unsafe_allow_html=True)
 
-    # 頁籤
+    # 3. 頁籤
     t1, t2, t3 = st.tabs(["💼 實單持股明細", "📅 歷史日誌", "🗂️ 個股追蹤"])
     with t1:
         if active_holdings_data:
-            df_display = pd.DataFrame(active_holdings_data)
-            # 💡 [優化：買進日期縮小寬度]
-            st.dataframe(
-                df_display,
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "買進日期": st.column_config.TextColumn("日期", width=60), # 強制設定窄寬度
-                    "損益金額": st.column_config.NumberColumn(format="$%d"),
-                    "損益率%": st.column_config.NumberColumn(format="%.2f%%"),
-                    "均價": st.column_config.NumberColumn(format="%.1f"),
-                    "股數": st.column_config.NumberColumn(width="small"),
-                }
-            )
-        else: st.info("目前無持倉紀錄。")
+            st.dataframe(pd.DataFrame(active_holdings_data), use_container_width=True, hide_index=True, column_config={"買進日期": st.column_config.TextColumn("日期", width=60), "損益金額": st.column_config.NumberColumn(format="$%d"), "損益率%": st.column_config.NumberColumn(format="%.2f%%")})
+        else: st.info("目前無持倉。")
 
-    completed_df = df[~df['盤後紀錄'].str.contains("實單持倉中|⏳ 等待更新...", na=False)].copy()
-    with t2:
-        if not completed_df.empty:
-            for d in sorted(completed_df['日期'].unique(), reverse=True):
-                with st.expander(f"📅 {d}"):
-                    for _, r in completed_df[completed_df['日期']==d].iterrows():
-                        st.write(f"{r['操作']} {r['標的']} ({r['漲跌%']}%)")
-        else: st.info("尚無結算紀錄。")
-
-    with t3:
-        if not completed_df.empty:
-            for t in sorted(completed_df['標的'].unique()):
-                with st.expander(f"📌 {t}"): st.write(completed_df[completed_df['標的']==t])
+    # 4. 歷史數據與紀律分析 (勝率回歸)
+    st.divider()
+    st.markdown("### 🎯 歷史預判與覆盤日誌")
+    
+    # 計算勝率
+    completed_buy_df = df[~df['盤後紀錄'].str.contains("實單持倉中|⏳ 等待更新...", na=False) & (df['操作'] == '買進')]
+    win_rate = (len(completed_buy_df[completed_buy_df['漲跌%'] > 0]) / len(completed_buy_df) * 100) if not completed_buy_df.empty else 0.0
+    
+    # 💡 補回妳要求的預判勝率文字顯示
+    st.markdown(f"""
+    <div style="margin-bottom: 10px;">
+        <span style="font-size: 1.1rem; color: #555;">📊 實際買進預判勝率</span><br>
+        <span style="font-size: 2.2rem; font-weight: bold; color: #2196f3;">{win_rate:.1f}%</span>
+    </div>
+    """, unsafe_allow_html=True)
 
     if not df.empty:
-        st.divider()
-        st.markdown("### 🎯 總交易紀律比例 (買進 vs. 觀察)")
+        # 圓餅圖 (紀律比例)
         discipline_df = df.copy()
         discipline_df['動作標籤'] = discipline_df['操作'].apply(lambda x: '買進' if x == '買進' else '未買進')
         fig = px.pie(discipline_df, names='動作標籤', hole=0.4, color='動作標籤', color_discrete_map={'買進':'#2196f3', '未買進':'#bdbdbd'})
-        fig.update_layout(margin=dict(t=30, b=0, l=0, r=0), height=350)
+        fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=300)
         st.plotly_chart(fig, use_container_width=True)
 
 except Exception as e: st.info(f"載入中... ({e})")
