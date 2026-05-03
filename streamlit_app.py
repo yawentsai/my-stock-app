@@ -5,8 +5,8 @@ import plotly.express as px
 from datetime import datetime
 import yfinance as yf
 
-st.set_page_config(page_title="交易戰情室 4.7", layout="wide")
-st.title("🎯 交易戰情室 4.7 (獵物鎖定版)")
+st.set_page_config(page_title="交易戰情室 4.8", layout="wide")
+st.title("🎯 交易戰情室 4.8 (交易紀律版)")
 
 # 💡 初始本金設定
 INITIAL_CAPITAL = 100000
@@ -200,13 +200,11 @@ try:
         c2.metric("剩餘可用資金", f"${rem_capital:,.0f}")
         c3.metric("本金利用率", f"{(used_capital/current_total_capital)*100:.1f}%")
 
-        # --- 全新加入：🎯 停利目標監控區 ---
-        st.write("") # 排版間距
+        st.write("") 
         if not active_df.empty:
             ready_to_sell = []
             active_holdings_data = []
             
-            # 先收集即時數據，判斷是否有達標股票
             for i, (idx, row) in enumerate(active_df.iterrows()):
                 curr_p = get_live_price(row['代號'])
                 if curr_p:
@@ -219,7 +217,6 @@ try:
                     if p_pct >= 10:
                         ready_to_sell.append(f"{row['標的']} (+{p_pct:.1f}%)")
             
-            # 顯示「獵物鎖定」警報器
             if ready_to_sell:
                 st.markdown(f"""
                 <div style="padding: 15px; border-radius: 8px; background-color: #ffebee; border-left: 5px solid #ef5350; margin-bottom: 20px;">
@@ -234,7 +231,6 @@ try:
                 </div>
                 """, unsafe_allow_html=True)
 
-            # 顯示雷達卡片
             st.markdown("#### 📡 即時持倉雷達")
             card_cols = st.columns(3)
             for i, data in enumerate(active_holdings_data):
@@ -251,22 +247,25 @@ try:
         # ==========================================
         # 模塊 2：🎯 歷史預判勝率與覆盤日誌
         # ==========================================
-        st.markdown("### 🎯 歷史勝率與覆盤日誌")
+        st.markdown("### 🎯 歷史預判與覆盤日誌")
         completed_df = df[~df['盤後紀錄'].isin(["⏳ 等待盤後更新...", "實單持倉中"])].copy()
         
         if not completed_df.empty:
-            completed_df['結果'] = completed_df['漲跌%'].apply(lambda x: '獲利' if x > 0 else ('虧損' if x < 0 else '持平'))
+            # 勝率依然用「買進」的部分來算
             b_df = completed_df[completed_df['操作'] == '買進']
             win_r = (len(b_df[b_df['漲跌%'] > 0]) / len(b_df) * 100) if len(b_df) > 0 else 0
             
+            # 圓餅圖改為顯示「買進」與「未買進(觀察)」的比例
+            completed_df['動作標籤'] = completed_df['操作'].apply(lambda x: '買進' if x == '買進' else '未買進')
+            
             c_w1, c_w2 = st.columns([1, 2])
             with c_w1:
-                st.metric("📊 實際操作/預判勝率", f"{win_r:.1f}%")
+                st.metric("📊 實際買進預判勝率", f"{win_r:.1f}%")
             with c_w2:
-                if not b_df.empty:
-                    fig = px.pie(b_df, names='結果', hole=0.4, color='結果', color_discrete_map={'獲利':'#ef5350', '虧損':'#26a69a', '持平':'#bdbdbd'})
-                    fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=200)
-                    st.plotly_chart(fig, use_container_width=True)
+                fig = px.pie(completed_df, names='動作標籤', hole=0.4, color='動作標籤', 
+                             color_discrete_map={'買進':'#ef5350', '未買進':'#bdbdbd'}) # 買進為紅色，未買進為灰色
+                fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=200)
+                st.plotly_chart(fig, use_container_width=True)
 
         st.write("") 
         tab1, tab2 = st.tabs(["🗂️ 依【個股】深度追蹤", "📅 依【日期】盤後日誌"])
