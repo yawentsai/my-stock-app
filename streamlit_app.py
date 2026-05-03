@@ -13,7 +13,7 @@ import urllib.parse
 st.set_page_config(page_title="零股追蹤神器", layout="wide")
 st.title("🚀 零股追蹤神器")
 
-# 2. 自動刷新 (60秒)
+# 2. 每 60 秒自動刷新
 st_autorefresh(interval=60000, limit=1000, key="global_refresh")
 
 # 💡 初始本金
@@ -58,7 +58,7 @@ except:
 for col in ['成本', '股數', '投入金額', '賣出價', '實現損益', '漲跌%']:
     existing_df[col] = pd.to_numeric(existing_df[col], errors='coerce').fillna(0.0)
 
-# --- 側邊欄：完整功能區 ---
+# --- 側邊欄：流程控制 ---
 with st.sidebar:
     st.header("⚡ 系統控制區")
     
@@ -96,7 +96,7 @@ with st.sidebar:
                 new_r = pd.DataFrame([{"日期": br_date.strftime("%m/%d"), "標的": br_name, "代號": br_symbol, "操作": "買進", "成本": float(br_price), "股數": int(br_qty), "投入金額": br_price*br_qty, "漲跌%": 0.0, "盤後紀錄": "實單持倉中"}])
                 conn.update(data=pd.concat([existing_df, new_r], ignore_index=True)); st.cache_data.clear(); st.rerun()
 
-# --- 主畫面顯示 ---
+# --- 主畫面運算 ---
 try:
     df = existing_df.dropna(subset=['標的']).copy()
     df['標的'] = df['標的'].astype(str).str.replace(r'\d+', '', regex=True).str.strip()
@@ -116,57 +116,59 @@ try:
     total_profit = total_realized + total_unrealized
     equity = INITIAL_CAPITAL + total_profit; used_cap = active_df['投入金額'].sum(); rem_cap = (INITIAL_CAPITAL + total_realized) - used_cap
 
-    # 1. 核心看板 (1.5倍大字)
+    # 1. 核心看板
     st.markdown("### 🏦 真實資產結算看板")
     p_c = "#1b5e20" if total_profit >= 0 else "#b71c1c"; p_b = "#e8f5e9" if total_profit >= 0 else "#ffebee"
     st.markdown(f"""<div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; margin-bottom:20px;"><div style="background:#f8f9fa; padding:15px 10px; border-radius:8px; text-align:center; border:1px solid #ddd;"><div style="font-size:1.05rem; color:#555;">總資產權益</div><div style="font-size:1.45rem; font-weight:bold;">${equity:,.0f}</div></div><div style="background:{p_b}; padding:15px 10px; border-radius:8px; text-align:center; border:1px solid #ddd;"><div style="font-size:1.05rem; color:{p_c};">🎯 累計獲利</div><div style="font-size:1.45rem; font-weight:bold; color:{p_c};">${total_profit:,.0f}</div></div><div style="background:#f8f9fa; padding:15px 10px; border-radius:8px; text-align:center; border:1px solid #ddd;"><div style="font-size:1.05rem; color:#555;">📈 ROI</div><div style="font-size:1.45rem; font-weight:bold;">{(total_profit/INITIAL_CAPITAL)*100:.2f}%</div></div><div style="background:#fff3e0; padding:15px 10px; border-radius:8px; text-align:center; border:1px solid #ddd;"><div style="font-size:1.05rem; color:#e65100;">已投入資金</div><div style="font-size:1.45rem; font-weight:bold; color:#e65100;">${used_cap:,.0f}</div></div><div style="background:#f8f9fa; padding:15px 10px; border-radius:8px; text-align:center; border:1px solid #ddd;"><div style="font-size:1.05rem; color:#555;">可用現金</div><div style="font-size:1.45rem; font-weight:bold;">${rem_cap:,.0f}</div></div><div style="background:#f8f9fa; padding:15px 10px; border-radius:8px; text-align:center; border:1px solid #ddd;"><div style="font-size:1.05rem; color:#555;">利用率</div><div style="font-size:1.45rem; font-weight:bold;">{(used_cap/(INITIAL_CAPITAL+total_realized))*100:.1f}%</div></div></div>""", unsafe_allow_html=True)
 
+    # 2. 停利提示
     if ready_to_sell:
         st.markdown(f"<div style='padding:15px; border-radius:8px; background-color:#ffebee; border:2px solid #ef5350; margin-bottom:20px;'><h4 style='margin-top:0; color:#c62828;'>🚨 停利標準已達標 ({len(ready_to_sell)} 檔)</h4><p style='margin-bottom:0; font-size:1.1rem; color:#b71c1c; font-weight:bold;'>👉 可賣出：{', '.join(ready_to_sell)}</p></div>", unsafe_allow_html=True)
     else:
         st.markdown("<div style='padding:10px; border-radius:8px; background-color:#f1f3f4; border:1px dashed #999; margin-bottom:20px; text-align:center;'><span style='color:#666; font-size:0.9rem;'>✅ 目前持股獲利尚未達 10% 停利標準，請繼續耐心持有。</span></div>", unsafe_allow_html=True)
 
-    # 3. 頁籤回歸核心 (💡 經典樣式回流)
+    # 3. 頁籤與回歸樣式
     t1, t2, t3, t4 = st.tabs(["💼 實單持股", "📰 即時新聞區", "📅 歷史日誌 (統整)", "🗂️ 個股深度追蹤"])
     
     with t1:
         if active_holdings_data:
             st.dataframe(pd.DataFrame(active_holdings_data), use_container_width=True, hide_index=True, column_config={"日期": st.column_config.TextColumn(width=60), "損益金額": st.column_config.NumberColumn(format="$%d"), "損益率%": st.column_config.NumberColumn(format="%.2f%%")})
-        else: st.info("目前無持倉。")
+        else: st.info("目前無持倉紀錄。")
 
     with t2:
-        news_w = sorted(list(set(list(active_df['標的'].unique()) + list(df[df['操作'] == '追蹤']['標的'].unique()))))
-        for s in news_w:
-            with st.expander(f"📢 {s} - 情報監控", expanded=True):
-                for n in fetch_stock_news(s):
-                    st.markdown(f"<div style='padding:8px; border-bottom:1px solid #eee;'><a href='{n['連結']}' target='_blank' style='text-decoration:none; color:#1e88e5; font-weight:bold;'>{n['標題']}</a><br><small style='color:gray;'>{n['來源']} | {n['發布']}</small></div>", unsafe_allow_html=True)
+        news_watchlist = sorted(list(set(list(active_df['標的'].unique()) + list(df[df['操作'] == '追蹤']['標的'].unique()))))
+        if news_watchlist:
+            for s in news_watchlist:
+                with st.expander(f"📢 {s} - 情報監控", expanded=True):
+                    for n in fetch_stock_news(s):
+                        st.markdown(f"<div style='padding:8px; border-bottom:1px solid #eee;'><a href='{n['連結']}' target='_blank' style='text-decoration:none; color:#1e88e5; font-weight:bold;'>{n['標題']}</a><br><small style='color:gray;'>{n['來源']} | {n['發布']}</small></div>", unsafe_allow_html=True)
 
     completed = df[~df['盤後紀錄'].isin(["實單持倉中", "⏳ 等待收盤回饋...", "僅新聞追蹤"])].copy()
     
-    with t3: # 💡 歷史日誌：回歸左側彩色粗邊卡片
+    with t3: # 💡 歷史日誌：[更新] 改成可收合樣式
         if not completed.empty:
             for d in sorted(completed['日期'].unique(), reverse=True):
                 st.markdown(f"#### 📅 {d}")
-                for _, r in completed[completed['日期']==d].iterrows():
+                day_df = completed[completed['日期'] == d]
+                for _, r in day_df.iterrows():
                     res_c = "#ef5350" if r['漲跌%'] > 0 else ("#26a69a" if r['漲跌%'] < 0 else "gray")
-                    bg = "#ef5350" if r['操作'] == '買進' else "#bdbdbd"
-                    st.markdown(f"""
-                    <div style="border-left:6px solid {res_c}; padding:15px; background:white; margin-bottom:15px; border-radius:8px; border: 1px solid #eee;">
-                        <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
-                            <span style='background-color:{bg}; color:white; padding:2px 8px; border-radius:4px; font-size:0.85rem;'>{r['操作']}</span>
-                            <strong style="font-size:1.1rem;">{r['標的']}</strong>
-                            <span style="color:{res_c}; font-weight:bold;">{r['漲跌%']:.1f}%</span>
+                    icon = "🚩" if "買進" in r['操作'] else "🔍"
+                    # 將每一檔標的放入摺疊區，標題包含結果
+                    with st.expander(f"{icon} {r['標的']} | {r['漲跌%']:.1f}%", expanded=False):
+                        bg = "#ef5350" if r['操作'] == '買進' else "#bdbdbd"
+                        st.markdown(f"""
+                        <div style="border-left:6px solid {res_c}; padding:15px; background:white; border-radius:8px; border: 1px solid #eee;">
+                            <div style="background:#f8f9fa; padding:8px; border-radius:6px; margin-bottom:5px;">
+                                <span style="color:#666; font-size:0.85rem;">🔍 盤前：</span>{r['盤前觀察']}
+                            </div>
+                            <div style="background:#fff; padding:8px; border-radius:6px; border:1px dashed #ddd;">
+                                <span style="color:#666; font-size:0.85rem;">📝 盤後：</span>{r['盤後紀錄']}
+                            </div>
                         </div>
-                        <div style="background:#f8f9fa; padding:8px; border-radius:6px; margin-bottom:5px;">
-                            <span style="color:#666; font-size:0.85rem;">🔍 盤前：</span>{r['盤前觀察']}
-                        </div>
-                        <div style="background:#fff; padding:8px; border-radius:6px; border:1px dashed #ddd;">
-                            <span style="color:#666; font-size:0.85rem;">📝 盤後：</span>{r['盤後紀錄']}
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                        """, unsafe_allow_html=True)
+        else: st.info("尚無統整紀錄。")
 
-    with t4: # 💡 個股追蹤：回歸 📌 圖釘與彩色卡片
+    with t4: # 💡 個股深度追蹤
         if not completed.empty:
             for t in sorted(completed['標的'].unique()):
                 t_df = completed[completed['標的'] == t].sort_values(by='日期', ascending=False)
