@@ -13,7 +13,6 @@ import urllib.parse
 st.set_page_config(page_title="零股追蹤神器", layout="wide")
 st.title("🚀 零股追蹤神器")
 
-# 樣式定義 (保留原始樣式並優化)
 st.markdown("""
     <style>
     .dashboard-grid {
@@ -68,7 +67,7 @@ def send_line_message(message):
         return False
 
 # 2. 自動刷新 (60秒)
-st_autorefresh(interval=60000, limit=1000, key="global_v86_final")
+st_autorefresh(interval=60000, limit=1000, key="global_v87_final")
 
 INITIAL_CAPITAL = 100000
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -180,6 +179,21 @@ with st.sidebar:
                         existing_df.at[idx, '賣出價'], existing_df.at[idx, '實現損益'] = sr_p, (sr_p - cp) * q_orig
                         existing_df.at[idx, '漲跌%'], existing_df.at[idx, '盤後紀錄'] = ((sr_p - cp)/cp)*100, f"清倉：{sr_n}"
                     conn.update(data=existing_df); st.cache_data.clear(); st.rerun()
+
+    st.divider()
+
+    with st.expander("🔔 加入/管理新聞追蹤"):
+        with st.form("add_n"):
+            an_n, an_s = st.text_input("股票名稱"), st.text_input("代號")
+            if st.form_submit_button("📡 開始追蹤") and an_n:
+                new_r = pd.DataFrame([{"日期": date.today().strftime("%m/%d"), "標的": an_n.strip(), "代號": an_s.strip(), "操作": "追蹤", "盤後紀錄": "僅新聞追蹤"}])
+                conn.update(data=pd.concat([existing_df, new_r], ignore_index=True)); st.cache_data.clear(); st.rerun()
+        track_list = existing_df[existing_df['操作'] == '追蹤']['標的'].unique()
+        if len(track_list) > 0:
+            del_t = st.selectbox("移除追蹤標的", track_list)
+            if st.button("🗑️ 確認刪除"):
+                new_df = existing_df[~((existing_df['標的'] == del_t) & (existing_df['操作'] == '追蹤'))]
+                conn.update(data=new_df); st.cache_data.clear(); st.rerun()
 
 # --- 主畫面顯示 ---
 try:
