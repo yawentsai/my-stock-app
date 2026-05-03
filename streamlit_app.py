@@ -5,10 +5,9 @@ import plotly.express as px
 from datetime import datetime
 import yfinance as yf
 
-st.set_page_config(page_title="交易戰情室 4.3", layout="wide")
-st.title("🎯 交易戰情室 4.3 (全表單防呆版)")
+st.set_page_config(page_title="交易戰情室 4.4", layout="wide")
+st.title("🎯 交易戰情室 4.4 (日夜雙軌作業版)")
 
-# 💡 本金設定
 TOTAL_CAPITAL = 100000
 
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -29,6 +28,15 @@ def get_live_price(symbol):
         except:
             return None
 
+# --- 讀取現有資料庫 ---
+try:
+    existing_df = conn.read(ttl=0)
+    for col in ['日期', '標的', '代號', '操作', '成本', '股數', '投入金額', '漲跌%', '盤前觀察', '盤後紀錄']:
+        if col not in existing_df.columns:
+            existing_df[col] = 0.0 if col in ['成本', '股數', '投入金額', '漲跌%'] else ""
+except Exception:
+    existing_df = pd.DataFrame(columns=['日期', '標的', '代號', '操作', '成本', '股數', '投入金額', '漲跌%', '盤前觀察', '盤後紀錄'])
+
 # --- 側邊欄 ---
 with st.sidebar:
     st.header("⚡ 實單買進登錄 (扣除本金)")
@@ -37,11 +45,9 @@ with st.sidebar:
         col1, col2 = st.columns(2)
         with col1: buy_name = st.text_input("名稱 (如: 晶技)")
         with col2: buy_symbol = st.text_input("代號 (如: 2449)")
-        
         buy_price = st.number_input("買入單價*", min_value=0.0, step=0.1)
         buy_qty = st.number_input("買入股數*", min_value=0, step=100, value=1000)
         buy_obs = st.text_area("進場理由")
-        
         submitted_buy = st.form_submit_button("✅ 確認買進")
         
         if submitted_buy and (buy_name or buy_symbol) and buy_price > 0 and buy_qty > 0:
@@ -49,16 +55,10 @@ with st.sidebar:
             cost = buy_price * buy_qty
             try:
                 new_row = pd.DataFrame([{
-                    "日期": datetime.now().strftime("%m/%d"),
-                    "標的": name_val, "代號": buy_symbol.strip(),
-                    "操作": "買進", "成本": float(buy_price), "股數": int(buy_qty),
-                    "投入金額": cost, "漲跌%": 0.0,
-                    "盤前觀察": buy_obs.replace('\n', ' '), "盤後紀錄": "實單持倉中"
+                    "日期": datetime.now().strftime("%m/%d"), "標的": name_val, "代號": buy_symbol.strip(),
+                    "操作": "買進", "成本": float(buy_price), "股數": int(buy_qty), "投入金額": cost, 
+                    "漲跌%": 0.0, "盤前觀察": buy_obs.replace('\n', ' '), "盤後紀錄": "實單持倉中"
                 }])
-                existing_df = conn.read(ttl=0)
-                for col in ['代號', '成本', '股數', '投入金額']:
-                    if col not in existing_df.columns: existing_df[col] = 0.0 if col != '代號' else ""
-                
                 conn.update(data=pd.concat([existing_df, new_row], ignore_index=True))
                 st.cache_data.clear()
                 st.success(f"🎉 {name_val} 已加入實單監控！")
@@ -69,54 +69,72 @@ with st.sidebar:
     st.divider()
     
     # ==========================================
-    # 🎯 全新功能：結構化日誌登錄表單
+    # 🎯 全新設計：分離的日夜工作流
     # ==========================================
-    st.header("📝 盤前預判與盤後日誌")
-    with st.form("log_form", clear_on_submit=True):
-        st.caption("輸入妳的觀察筆記，系統將自動計算勝率")
-        
-        log_col1, log_col2 = st.columns(2)
-        with log_col1: 
+    st.header("📝 訓練預判工作區")
+    
+    # 🌅 Step 1: 盤前預判
+    with st.expander("🌅 Step 1: 盤前預判 (早上填寫)", expanded=True):
+        with st.form("pre_market_form", clear_on_submit=True):
             log_date = st.text_input("日期", value=datetime.now().strftime("%m/%d"))
-        with log_col2: 
             log_action = st.selectbox("動作標記", ["觀察", "✅ 買進"])
+            log_name = st.text_input("標的名稱 (必填)*")
+            log_pre = st.text_area("盤前觀點 / 觀察重點")
             
-        log_name = st.text_input("標的名稱 (必填)*")
-        log_pre = st.text_area("盤前觀點 / 觀察重點")
-        log_post = st.text_area("盤後實際狀況與回饋")
-        log_pct = st.number_input("漲跌幅 % (如: 6.79, -1.6)", value=0.0, step=0.1)
-        
-        submitted_log = st.form_submit_button("🚀 寫入預判日誌")
-        
-        if submitted_log:
-            if log_name.strip():
-                try:
+            submitted_pre = st.form_submit_button("🚀 送出盤前計畫")
+            
+            if submitted_pre:
+                if log_name.strip():
                     new_log = pd.DataFrame([{
-                        "日期": log_date, 
-                        "標的": log_name.strip(), 
-                        "代號": "",
+                        "日期": log_date, "標的": log_name.strip(), "代號": "",
                         "操作": "買進" if "買進" in log_action else "觀察", 
-                        "成本": 0.0, "股數": 0, "投入金額": 0.0,
-                        "漲跌%": float(log_pct), 
+                        "成本": 0.0, "股數": 0, "投入金額": 0.0, "漲跌%": 0.0, 
                         "盤前觀察": log_pre.replace('\n', ' '), 
-                        "盤後紀錄": log_post.replace('\n', ' ')
+                        "盤後紀錄": "⏳ 等待盤後更新..." # 關鍵標記
                     }])
-                    
-                    existing_df = conn.read(ttl=0)
-                    for col in ['代號', '成本', '股數', '投入金額']:
-                        if col not in existing_df.columns: existing_df[col] = 0.0 if col != '代號' else ""
-                        
                     conn.update(data=pd.concat([existing_df, new_log], ignore_index=True))
                     st.cache_data.clear()
-                    st.success(f"🎊 {log_name} 日誌已成功記錄！")
+                    st.success(f"🌅 {log_name} 盤前計畫已記錄！")
                     st.rerun()
-                except Exception as e:
-                    st.error(f"寫入失敗: {str(e)}")
-            else:
-                st.warning("⚠️ 標的名稱為必填項目！")
+                else:
+                    st.warning("請填寫標的名稱！")
+
+    # 🌇 Step 2: 盤後更新
+    with st.expander("🌇 Step 2: 盤後更新 (下午填寫)", expanded=True):
+        # 尋找需要更新的標的
+        pending_mask = existing_df['盤後紀錄'] == "⏳ 等待盤後更新..."
+        pending_records = existing_df[pending_mask]
+        
+        if not pending_records.empty:
+            with st.form("post_market_form", clear_on_submit=True):
+                # 製作下拉選單選項 (日期 + 名稱)
+                options = pending_records.apply(lambda x: f"{x['日期']} - {x['標的']}", axis=1).tolist()
+                selected_option = st.selectbox("選擇要更新的標的", options)
+                
+                log_post = st.text_area("盤後實際狀況與回饋")
+                log_pct = st.number_input("今日漲跌幅 % (如: 6.79, -1.6)", value=0.0, step=0.1)
+                
+                submitted_post = st.form_submit_button("💾 儲存盤後結果")
+                
+                if submitted_post:
+                    # 解析選到的日期與名稱
+                    sel_date, sel_name = selected_option.split(" - ", 1)
+                    # 找出那一行的索引並更新
+                    idx_to_update = existing_df[(existing_df['日期'] == sel_date) & 
+                                                (existing_df['標的'] == sel_name) & 
+                                                (existing_df['盤後紀錄'] == "⏳ 等待盤後更新...")].index[0]
+                    
+                    existing_df.at[idx_to_update, '盤後紀錄'] = log_post.replace('\n', ' ')
+                    existing_df.at[idx_to_update, '漲跌%'] = float(log_pct)
+                    
+                    conn.update(data=existing_df)
+                    st.cache_data.clear()
+                    st.success(f"🌇 {sel_name} 盤後結果已統整完成！")
+                    st.rerun()
+        else:
+            st.info("✅ 目前沒有需要盤後更新的標的。")
 
     st.divider()
-    st.header("⚙️ 系統管理")
     if st.button("🗑️ 一鍵清空舊資料庫"):
         empty_df = pd.DataFrame(columns=["日期", "標的", "代號", "操作", "成本", "股數", "投入金額", "漲跌%", "盤前觀察", "盤後紀錄"])
         conn.update(data=empty_df)
@@ -125,10 +143,7 @@ with st.sidebar:
 
 # --- 主畫面顯示 ---
 try:
-    df = conn.read(ttl=0).dropna(subset=['標的'])
-    for col in ['代號', '成本', '股數', '投入金額']:
-        if col not in df.columns: df[col] = 0.0 if col != '代號' else ""
-        
+    df = existing_df.dropna(subset=['標的']).copy()
     df['標的'] = df['標的'].astype(str).str.replace(r'\d+', '', regex=True).str.strip()
     df = df[(df['標的'].str.len() <= 6) & (df['標的'].str.len() > 0)]
     df['漲跌%'] = pd.to_numeric(df['漲跌%'], errors='coerce').fillna(0.0)
@@ -139,7 +154,6 @@ try:
         # 模塊 1：💰 本金與實單持倉監控
         # ==========================================
         monitor_df = df[(df['操作'] == '買進') & (df['成本'] > 0)].copy()
-        
         st.markdown(f"### 💰 實單持倉與資金雷達 ({TOTAL_CAPITAL/10000:.0f}萬本金)")
         used_capital = monitor_df['投入金額'].sum() if not monitor_df.empty else 0
         rem_capital = TOTAL_CAPITAL - used_capital
@@ -152,7 +166,6 @@ try:
         if not monitor_df.empty:
             plot_data = []
             total_unrealized = 0
-            
             card_cols = st.columns(3)
             for i, (idx, row) in enumerate(monitor_df.iterrows()):
                 current_price = get_live_price(row['代號'])
@@ -161,7 +174,6 @@ try:
                     profit_twd = (current_price - row['成本']) * row['股數']
                     total_unrealized += profit_twd
                     plot_data.append({"標的": row['標的'], "損益(TWD)": profit_twd, "絕對值": abs(profit_twd), "狀態": "獲利" if profit_twd > 0 else "虧損"})
-                    
                     with card_cols[i % 3]:
                         st.markdown(f"""
                         <div style="padding:15px; background:white; border-radius:10px; border: 1px solid #ddd; border-left: 5px solid {'#ef5350' if profit_pct>=10 else '#2196f3'};">
@@ -170,18 +182,16 @@ try:
                             <h3 style="margin:0; color:{'#ef5350' if profit_pct>0 else '#26a69a'};">{'+' if profit_pct>0 else ''}{profit_pct:.2f}% (${profit_twd:,.0f})</h3>
                         </div>
                         """, unsafe_allow_html=True)
-                        if profit_pct >= 10:
-                            st.error(f"🚨 **{row['標的']}** 已達 10% 停利目標！")
+                        if profit_pct >= 10: st.error(f"🚨 **{row['標的']}** 已達 10% 停利目標！")
             
             if plot_data:
                 st.write("")
-                st.caption("🔻 實單持股損益貢獻度 (圓餅大小代表影響力，紅色為獲利，綠色為虧損)")
+                st.caption("🔻 實單持股損益貢獻度")
                 pdf = pd.DataFrame(plot_data)
                 fig_pnl = px.pie(pdf, values='絕對值', names='標的', hole=0.4, color='狀態',
                                  color_discrete_map={'獲利':'#ef5350', '虧損':'#26a69a'})
                 fig_pnl.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=300)
                 st.plotly_chart(fig_pnl, use_container_width=True)
-
         st.divider()
 
         # ==========================================
@@ -189,27 +199,33 @@ try:
         # ==========================================
         st.markdown("### 🎯 歷史預判勝率與覆盤日誌")
         
-        df['預判結果'] = df['漲跌%'].apply(lambda x: '獲利' if x > 0 else ('虧損' if x < 0 else '持平'))
-        buy_df = df[df['操作'] == '買進']
+        # 過濾掉還在等待盤後更新的資料，不列入勝率計算
+        completed_df = df[df['盤後紀錄'] != "⏳ 等待盤後更新..."].copy()
         
-        win_rate = (len(buy_df[buy_df['漲跌%'] > 0]) / len(buy_df) * 100) if len(buy_df) > 0 else 0
-        st.metric("📊 實際買進預判勝率", f"{win_rate:.1f}%")
-        
-        fig_winrate = px.pie(buy_df, names='預判結果', hole=0.4, color='預判結果', 
-                             color_discrete_map={'獲利':'#ef5350', '虧損':'#26a69a', '持平':'#bdbdbd'})
-        fig_winrate.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=300)
-        st.plotly_chart(fig_winrate, use_container_width=True)
+        if not completed_df.empty:
+            completed_df['預判結果'] = completed_df['漲跌%'].apply(lambda x: '獲利' if x > 0 else ('虧損' if x < 0 else '持平'))
+            buy_df = completed_df[completed_df['操作'] == '買進']
+            
+            win_rate = (len(buy_df[buy_df['漲跌%'] > 0]) / len(buy_df) * 100) if len(buy_df) > 0 else 0
+            st.metric("📊 實際買進預判勝率", f"{win_rate:.1f}%")
+            
+            if not buy_df.empty:
+                fig_winrate = px.pie(buy_df, names='預判結果', hole=0.4, color='預判結果', 
+                                     color_discrete_map={'獲利':'#ef5350', '虧損':'#26a69a', '持平':'#bdbdbd'})
+                fig_winrate.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=300)
+                st.plotly_chart(fig_winrate, use_container_width=True)
+        else:
+            st.info("尚無完成盤後更新的資料可計算勝率。")
 
         st.write("") 
-
         tab1, tab2 = st.tabs(["🗂️ 依【個股】深度追蹤", "📅 依【日期】盤後日誌"])
-
         with tab1:
             for target in sorted(df['標的'].unique()):
                 t_df = df[df['標的'] == target].sort_values(by='日期', ascending=False)
                 with st.expander(f"📌 {target} (總紀錄：{len(t_df)} 筆)"):
                     for _, row in t_df.iterrows():
                         color = "#ef5350" if row['漲跌%'] > 0 else ("#26a69a" if row['漲跌%'] < 0 else "#bdbdbd")
+                        if row['盤後紀錄'] == "⏳ 等待盤後更新...": color = "#ffb300" # 等待中顯示橘黃色
                         st.markdown(f"""
                         <div style="border-left:5px solid {color}; padding:10px; background:#f8f9fa; margin-bottom:10px;">
                             <b>{row['日期']} | {row['操作']} | <span style="color:{color};">{row['漲跌%']}%</span></b><br>
@@ -219,18 +235,15 @@ try:
                             </div>
                         </div>
                         """, unsafe_allow_html=True)
-
         with tab2:
             df['月份'] = df['日期'].apply(lambda x: str(x).split('/')[0] + '月' if '/' in str(x) else '未知')
             def sort_month(m_str):
                 try: return int(m_str.replace('月', ''))
                 except: return 0
-            months = sorted(df['月份'].unique(), key=sort_month, reverse=True)
-            for month in months:
+            for month in sorted(df['月份'].unique(), key=sort_month, reverse=True):
                 st.markdown(f"#### 🗓️ {month}")
                 m_df = df[df['月份'] == month]
-                dates = sorted(m_df['日期'].unique(), reverse=True)
-                for date in dates:
+                for date in sorted(m_df['日期'].unique(), reverse=True):
                     d_df = m_df[m_df['日期'] == date]
                     buy_count = len(d_df[d_df['操作'] == '買進'])
                     obs_count = len(d_df[d_df['操作'] == '觀察'])
@@ -238,6 +251,7 @@ try:
                         for _, row in d_df.iterrows():
                             action_badge = f"<span style='background-color:#ef5350; color:white; padding:2px 6px; border-radius:4px; font-size:0.8rem;'>買進</span>" if row['操作'] == '買進' else f"<span style='background-color:#bdbdbd; color:white; padding:2px 6px; border-radius:4px; font-size:0.8rem;'>觀察</span>"
                             result_color = "#ef5350" if row['漲跌%'] > 0 else ("#26a69a" if row['漲跌%'] < 0 else "gray")
+                            if row['盤後紀錄'] == "⏳ 等待盤後更新...": result_color = "#ffb300"
                             st.markdown(f"""
                             <div style="padding:8px; border-bottom:1px solid #eee;">
                                 {action_badge} <strong>{row['標的']}</strong> 
@@ -245,7 +259,6 @@ try:
                                 <span style="color:#666; font-size:0.85rem;">📝 {row['盤後紀錄']}</span>
                             </div>
                             """, unsafe_allow_html=True)
-
     else:
         st.info("資料庫目前為空，請輸入資料。")
 except Exception as e:
