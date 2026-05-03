@@ -7,7 +7,7 @@ import yfinance as yf
 
 # 標題設定
 st.set_page_config(page_title="零股追蹤神器", layout="wide")
-st.title("🚀 零股追蹤神器 6.2")
+st.title("🚀 零股追蹤神器 6.3")
 
 # 💡 初始本金設定
 INITIAL_CAPITAL = 100000
@@ -101,10 +101,10 @@ try:
         p_twd = (curr_p - row['成本']) * row['股數'] if curr_p else 0.0
         total_unrealized_pnl += p_twd
         active_holdings_data.append({
-            '日期': row['日期'], '標的': row['標的'], '代號': row['代號'], 
-            '成本': row['成本'], '股數': row['股數'], '投入金額': row['投入金額'], 
-            '現價': curr_p if curr_p else "讀取中...", 
-            '損益金額': p_twd, '損益率': p_pct
+            '買進日期': row['日期'], '標的名稱': row['標的'], '代號': row['代號'], 
+            '均價': row['成本'], '股數': row['股數'], '投入本金': row['投入金額'], 
+            '即時現價': curr_p if curr_p else "讀取中...", 
+            '損益金額': p_twd, '損益率%': p_pct
         })
         if p_pct >= 10: ready_to_sell_names.append(f"{row['標的']} (+{p_pct:.1f}%)")
                 
@@ -148,6 +148,7 @@ try:
     """
     st.markdown(dashboard_html, unsafe_allow_html=True)
 
+    # 💡 [修復：達標提示欄位回歸]
     if ready_to_sell_names:
         st.markdown(f"""
         <div style="padding: 15px; border-radius: 8px; background-color: #ffebee; border: 2px solid #ef5350; margin-bottom: 20px;">
@@ -155,25 +156,30 @@ try:
             <p style="margin-bottom: 0; font-size: 1.1rem; color: #b71c1c; font-weight: bold;">👉 可賣出：{', '.join(ready_to_sell_names)}</p>
         </div>
         """, unsafe_allow_html=True)
+    else:
+        # 當沒有股票達標時，顯示灰色提示框
+        st.markdown("""
+        <div style="padding: 10px; border-radius: 8px; background-color: #f1f3f4; border: 1px dashed #999; margin-bottom: 20px; text-align: center;">
+            <span style="color: #666; font-size: 0.9rem;">✅ 目前持股獲利尚未達 10% 停利標準，請繼續耐心持有。</span>
+        </div>
+        """, unsafe_allow_html=True)
 
     # 頁籤
     t1, t2, t3 = st.tabs(["💼 實單持股明細", "📅 歷史日誌", "🗂️ 個股追蹤"])
     with t1:
         if active_holdings_data:
-            # 💡 [全新優化]：顯化損益欄位並加上格式
             df_display = pd.DataFrame(active_holdings_data)
-            # 調整顯示名稱
-            df_display.columns = ['買進日期', '標的名稱', '代號', '均價', '股數', '投入本金', '即時現價', '損益金額', '損益率%']
-            
-            # 使用 st.dataframe 的進階配置功能來美化損益
+            # 💡 [優化：買進日期縮小寬度]
             st.dataframe(
                 df_display,
                 use_container_width=True,
                 hide_index=True,
                 column_config={
+                    "買進日期": st.column_config.TextColumn("日期", width=60), # 強制設定窄寬度
                     "損益金額": st.column_config.NumberColumn(format="$%d"),
                     "損益率%": st.column_config.NumberColumn(format="%.2f%%"),
-                    "買進日期": st.column_config.TextColumn(width="small")
+                    "均價": st.column_config.NumberColumn(format="%.1f"),
+                    "股數": st.column_config.NumberColumn(width="small"),
                 }
             )
         else: st.info("目前無持倉紀錄。")
