@@ -2,19 +2,18 @@ import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 import plotly.express as px
-from datetime import datetime, date
-import yfinance as yf
-from streamlit_autorefresh import st_autorefresh
+from datetime import datetime
 import requests
+from streamlit_autorefresh import st_autorefresh
 
-# 1. 基礎設定與手機版規格優化
+# 1. 基礎設定：優化手機版顯示比例
 st.set_page_config(page_title="零股追蹤神器", layout="centered")
-st_autorefresh(interval=60000, key="datarefresh") # 每分鐘更新
+st_autorefresh(interval=60000, key="datarefresh") # 每分鐘自動刷新
 
 # --- LINE 通知核心函數 ---
 def send_line_message(message):
     try:
-        # 從 Secrets 讀取金鑰
+        # 從 Secrets 讀取妳設定的金鑰
         token = st.secrets["LINE_CHANNEL_ACCESS_TOKEN"]
         user_id = st.secrets["LINE_USER_ID"]
         
@@ -32,28 +31,18 @@ def send_line_message(message):
     except Exception:
         return False
 
-# --- 側邊欄系統控制區 ---
+# --- 側邊欄：系統控制區 ---
 with st.sidebar:
     st.markdown("⚡ # 系統控制區")
-    
     with st.expander("🌅 Step 1: 盤前計畫"):
-        st.info("檢查美股表現與台積電 ADR 走勢。")
-    
+        st.info("檢查美股與台積電 ADR 走勢。")
     with st.expander("🌇 Step 2: 盤後統整"):
-        st.info("記錄今日交易邏輯與損益。")
-        
+        st.info("記錄今日交易邏輯。")
     st.divider()
-    
-    with st.expander("🛒 實單庫存：買入登錄"):
-        st.write("連動 Google Sheets...")
-        
-    with st.expander("💸 實單庫存：賣出結算"):
-        st.write("計算最終獲利入袋。")
-
-    st.divider()
+    with st.expander("🛒 實單庫存：買入/賣出"):
+        st.write("連動 Google Sheets 數據...")
     with st.expander("🔔 加入/管理新聞追蹤"):
         st.write("設定關鍵字追蹤。")
-
     st.divider()
     st.subheader("🛠️ 通知系統測試")
     if st.button("🔔 測試發送 LINE 通知"):
@@ -65,48 +54,45 @@ with st.sidebar:
 # --- 主頁面：🚀 零股追蹤神器 ---
 st.title("🚀 零股追蹤神器")
 
-# 2. 連結 Google Sheets 並讀取數據
+# 2. 連結數據源
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
     df = conn.read()
 except Exception:
-    st.error("Google Sheets 連接失敗，請檢查 Secrets 中的 [connections.gsheets] 設定。")
+    st.error("數據連接中斷，請確認 Secrets 中的 [connections.gsheets] 設定。")
 
-# --- 🎯 真實資產結算看板 (手機版優化佈局) ---
+# --- 🎯 真實資產結算看板 ---
 st.markdown("### 🏦 真實資產結算看板")
 
-# 假設數據 (這裡應根據妳的 Sheets 內容動態計算)
-# 均價 1770, 持股 1 股, 假設現價 1810
-cost_price = 1770
-current_price = 1810
-profit_rate = (current_price - cost_price) / cost_price
+# 模擬看板數據 (應由 df 計算得出)
+# 妳目前持有：雍智科技 (6683)，均價 1770
+profit_rate = 0.0226 # 模擬妳目前的獲利 2.26%
 
-# 使用小卡片風格顯示指標
-m1, m2 = st.columns(2)
-m1.metric("總資產權益", "$100,000")
-m2.metric("累計獲利", "$0", delta="0.00%")
+# 使用兩兩分組的 columns 避免手機版過度拉長
+c1, c2 = st.columns(2)
+c1.metric("總資產權益", "$100,000")
+c2.metric("累計獲利", "$0", delta="0.00%")
 
-m3, m4 = st.columns(2)
-m3.metric("可用現金", "$98,230")
-m4.metric("利用率", "1.8%")
+c3, c4 = st.columns(2)
+c3.metric("可用現金", "$98,230")
+c4.metric("利用率", "1.8%")
 
 st.divider()
 
-# --- 🚦 停利執行監控區 ---
+# --- 🚦 停利執行監控 ---
 if profit_rate >= 0.02:
-    st.warning(f"⚠️ 停利提醒：目前的持股獲利已達 {profit_rate:.2%}！")
-    # 這裡可以加入自動發送邏輯，或維持手動測試
+    st.warning(f"⚠️ 停利提醒：目前的持股獲利已達 {profit_rate:.2%}！") #
 else:
-    st.success("✅ 目前持股獲利尚未達 2% 停利標準，請繼續耐心持有。")
+    st.success("✅ 目前獲利尚未達 2% 標的，請繼續耐心持有。")
 
 # --- 📊 實際預判勝率 ---
 st.markdown("### 📊 實際預判勝率")
 st.title("52.6%")
 fig = px.pie(values=[74.1, 22.2, 3.7], names=['買進', '觀察', '追蹤'], hole=0.5)
-fig.update_layout(margin=dict(t=0, b=0, l=0, r=0))
+fig.update_layout(margin=dict(t=10, b=10, l=10, r=10), showlegend=True)
 st.plotly_chart(fig, use_container_width=True)
 
-# --- 📑 持股明細表 ---
+# --- 📑 實單持股明細 ---
 st.markdown("#### 📋 實單持股明細")
-# 這裡會顯示妳 Sheets 裡的雍智科技數據
+# 根據截圖顯示：日期, 標的, 操作, 漲跌%, 盤前觀察
 st.dataframe(df, hide_index=True)
