@@ -2,14 +2,13 @@ import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 import plotly.express as px
-import re
 from datetime import datetime
 import yfinance as yf
 
-st.set_page_config(page_title="交易戰情室 4.2", layout="wide")
-st.title("🎯 交易戰情室 4.2 (雙棲旗艦版)")
+st.set_page_config(page_title="交易戰情室 4.3", layout="wide")
+st.title("🎯 交易戰情室 4.3 (全表單防呆版)")
 
-# 💡 雅雯，如果未來妳的本金增加了，只要在這裡把 100000 改成妳新的本金數字即可！
+# 💡 本金設定
 TOTAL_CAPITAL = 100000
 
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -32,7 +31,7 @@ def get_live_price(symbol):
 
 # --- 側邊欄 ---
 with st.sidebar:
-    st.header("⚡ 快速買進登錄 (實單)")
+    st.header("⚡ 實單買進登錄 (扣除本金)")
     with st.form("buy_form", clear_on_submit=True):
         st.caption("填寫此單將扣除本金額度並啟動即時監控")
         col1, col2 = st.columns(2)
@@ -43,9 +42,9 @@ with st.sidebar:
         buy_qty = st.number_input("買入股數*", min_value=0, step=100, value=1000)
         buy_obs = st.text_area("進場理由")
         
-        submitted = st.form_submit_button("✅ 確認買進")
+        submitted_buy = st.form_submit_button("✅ 確認買進")
         
-        if submitted and (buy_name or buy_symbol) and buy_price > 0 and buy_qty > 0:
+        if submitted_buy and (buy_name or buy_symbol) and buy_price > 0 and buy_qty > 0:
             name_val = buy_name.strip() if buy_name.strip() else buy_symbol.strip()
             cost = buy_price * buy_qty
             try:
@@ -69,65 +68,55 @@ with st.sidebar:
 
     st.divider()
     
-    st.header("📥 盤後筆記批次匯入 (預判)")
-    user_input = st.text_area("貼上盤後紀錄與漲跌幅：", height=200)
-    if st.button("🚀 開始精密解析"):
-        if user_input:
-            try:
-                new_data = []
-                fallback_date = datetime.now().strftime("%m/%d")
-                date_blocks = re.split(r'\n(?=\d{1,2}/\d{1,2})', '\n' + user_input.strip())
-                for d_block in date_blocks:
-                    d_block = d_block.strip()
-                    if not d_block: continue
-                    lines = d_block.split('\n')
-                    date_match = re.match(r'(\d{1,2}/\d{1,2})', lines[0].strip())
-                    current_date = date_match.group(1) if date_match else fallback_date
-                    content_to_parse = '\n'.join(lines[1:]) if date_match else d_block
+    # ==========================================
+    # 🎯 全新功能：結構化日誌登錄表單
+    # ==========================================
+    st.header("📝 盤前預判與盤後日誌")
+    with st.form("log_form", clear_on_submit=True):
+        st.caption("輸入妳的觀察筆記，系統將自動計算勝率")
+        
+        log_col1, log_col2 = st.columns(2)
+        with log_col1: 
+            log_date = st.text_input("日期", value=datetime.now().strftime("%m/%d"))
+        with log_col2: 
+            log_action = st.selectbox("動作標記", ["觀察", "✅ 買進"])
+            
+        log_name = st.text_input("標的名稱 (必填)*")
+        log_pre = st.text_area("盤前觀點 / 觀察重點")
+        log_post = st.text_area("盤後實際狀況與回饋")
+        log_pct = st.number_input("漲跌幅 % (如: 6.79, -1.6)", value=0.0, step=0.1)
+        
+        submitted_log = st.form_submit_button("🚀 寫入預判日誌")
+        
+        if submitted_log:
+            if log_name.strip():
+                try:
+                    new_log = pd.DataFrame([{
+                        "日期": log_date, 
+                        "標的": log_name.strip(), 
+                        "代號": "",
+                        "操作": "買進" if "買進" in log_action else "觀察", 
+                        "成本": 0.0, "股數": 0, "投入金額": 0.0,
+                        "漲跌%": float(log_pct), 
+                        "盤前觀察": log_pre.replace('\n', ' '), 
+                        "盤後紀錄": log_post.replace('\n', ' ')
+                    }])
                     
-                    target_blocks = re.split(r'\n(?=✅|[\u4e00-\u9fa5]{2,5}[:：])', '\n' + content_to_parse)
-                    for t_block in target_blocks:
-                        t_block = t_block.strip()
-                        if not t_block: continue
-                        header = t_block.split('\n')[0]
-                        if "：" in header or ":" in header:
-                            target_raw = re.split(r'[：:]', header)[0].replace('✅', '').strip()
-                            target_clean = re.sub(r'\d+', '', target_raw).strip()
-                            if len(target_clean) > 8 or not target_clean: continue
-                            
-                            full_content = "\n".join(t_block.split('\n'))
-                            obs_part, rec_part = "", ""
-                            if "👉" in full_content:
-                                parts = re.split(r'👉[🏻]?', full_content)
-                                obs_part = parts[0].split("：", 1)[-1].strip() if "：" in parts[0] else parts[0]
-                                rec_part = parts[1].strip()
-                            else:
-                                obs_part = full_content.split("：", 1)[-1].strip() if "：" in full_content else full_content
-                            
-                            norm_text = (rec_part if rec_part else full_content).replace('＋', '+').replace('－', '-').replace(' ', '')
-                            matches = re.findall(r'([+-]\d+(?:\.\d+)?)', norm_text)
-                            change = float(matches[-1]) if matches else 0.0
-                            is_buy = "✅" in header or "買" in full_content
-                            
-                            new_data.append({
-                                "日期": current_date, "標的": target_clean, "代號": "",
-                                "操作": "買進" if is_buy else "觀察", "成本": 0.0, "股數": 0, "投入金額": 0.0,
-                                "漲跌%": change, "盤前觀察": obs_part, "盤後紀錄": rec_part
-                            })
-                
-                if new_data:
-                    df_new = pd.DataFrame(new_data)
                     existing_df = conn.read(ttl=0)
                     for col in ['代號', '成本', '股數', '投入金額']:
                         if col not in existing_df.columns: existing_df[col] = 0.0 if col != '代號' else ""
-                    conn.update(data=pd.concat([existing_df, df_new], ignore_index=True))
+                        
+                    conn.update(data=pd.concat([existing_df, new_log], ignore_index=True))
                     st.cache_data.clear()
-                    st.success(f"🎊 成功匯入 {len(new_data)} 筆！")
+                    st.success(f"🎊 {log_name} 日誌已成功記錄！")
                     st.rerun()
-            except Exception as e:
-                st.error(f"解析錯誤：{str(e)}")
+                except Exception as e:
+                    st.error(f"寫入失敗: {str(e)}")
+            else:
+                st.warning("⚠️ 標的名稱為必填項目！")
 
     st.divider()
+    st.header("⚙️ 系統管理")
     if st.button("🗑️ 一鍵清空舊資料庫"):
         empty_df = pd.DataFrame(columns=["日期", "標的", "代號", "操作", "成本", "股數", "投入金額", "漲跌%", "盤前觀察", "盤後紀錄"])
         conn.update(data=empty_df)
@@ -200,7 +189,6 @@ try:
         # ==========================================
         st.markdown("### 🎯 歷史預判勝率與覆盤日誌")
         
-        # 💡 [修復點]：先給全體資料貼上獲利/虧損標籤，再篩選買進的資料去畫圓餅圖！
         df['預判結果'] = df['漲跌%'].apply(lambda x: '獲利' if x > 0 else ('虧損' if x < 0 else '持平'))
         buy_df = df[df['操作'] == '買進']
         
