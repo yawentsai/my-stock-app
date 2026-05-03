@@ -9,40 +9,40 @@ import requests
 from bs4 import BeautifulSoup
 import urllib.parse
 
-# 1. 基礎設定
+# 1. 基礎設定與標題
 st.set_page_config(page_title="零股追蹤神器", layout="wide")
 st.title("🚀 零股追蹤神器")
 
-# ⚡ 強制移動端樣式優化 (解決跑掉問題)
+# ⚡ 移動端網格鎖定與樣式優化
 st.markdown("""
     <style>
-    /* 強制看板維持三欄排列，不受螢幕寬度影響 */
     .dashboard-grid {
         display: grid;
         grid-template-columns: repeat(3, 1fr) !important;
-        gap: 6px !important;
-        margin-bottom: 15px;
+        gap: 8px !important;
+        margin-bottom: 20px;
     }
-    /* 縮小看板字體以適應手機螢幕 */
     .metric-card {
         background: #f8f9fa;
-        padding: 10px 2px !important;
+        padding: 12px 5px !important;
         border-radius: 8px;
         text-align: center;
         border: 1px solid #ddd;
     }
-    .metric-label { font-size: 0.75rem; color: #555; }
-    .metric-value { font-size: 1.05rem; font-weight: bold; }
+    .metric-label { font-size: 0.8rem; color: #555; margin-bottom: 4px; }
+    .metric-value { font-size: 1.15rem; font-weight: bold; }
     
-    /* 側邊欄間距優化 */
+    /* 側邊欄美化 */
     section[data-testid="stSidebar"] .stExpander {
-        margin-bottom: 10px !important;
+        border: 1px solid #eee !important;
+        border-radius: 8px !important;
+        margin-bottom: 12px !important;
     }
     </style>
 """, unsafe_allow_html=True)
 
 # 2. 自動刷新 (60秒)
-st_autorefresh(interval=60000, limit=1000, key="global_refresh")
+st_autorefresh(interval=60000, limit=1000, key="global_heartbeat")
 
 INITIAL_CAPITAL = 100000
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -82,44 +82,55 @@ except:
 for col in ['成本', '股數', '投入金額', '賣出價', '實現損益', '漲跌%']:
     existing_df[col] = pd.to_numeric(existing_df[col], errors='coerce').fillna(0.0)
 
-# --- 側邊欄：流程控制 ---
+# --- 側邊欄：完整功能區 (找回刪除與庫存) ---
 with st.sidebar:
     st.header("⚡ 系統控制區")
     
     with st.expander("🌅 Step 1: 盤前計畫", expanded=True):
-        with st.form("pre_market_f", clear_on_submit=True):
+        with st.form("pre_market_form", clear_on_submit=True):
             p_date = st.text_input("日期", value=date.today().strftime("%m/%d"))
-            p_action = st.selectbox("性質", ["觀察", "✅ 買進"])
+            p_action = st.selectbox("動作性質", ["觀察", "✅ 買進"])
             p_name = st.text_input("股票名稱*")
             p_symbol = st.text_input("代號")
-            p_pre = st.text_area("🔍 盤前觀點")
+            p_pre = st.text_area("🔍 盤前計畫")
             if st.form_submit_button("🚀 發布計畫") and p_name:
-                new_row = pd.DataFrame([{"日期": p_date, "標的": p_name.strip(), "代號": p_symbol.strip(), "操作": "買進" if "買進" in p_action else "觀察", "成本": 0.0, "股數": 0, "投入金額": 0.0, "漲跌%": 0.0, "盤前觀察": p_pre, "盤後紀錄": "⏳ 等待更新...", "賣出價": 0.0, "實現損益": 0.0}])
+                new_row = pd.DataFrame([{"日期": p_date, "標的": p_name.strip(), "代號": p_symbol.strip(), "操作": "買進" if "買進" in p_action else "觀察", "成本": 0.0, "股數": 0, "投入金額": 0.0, "漲跌%": 0.0, "盤前觀察": p_pre, "盤後紀錄": "⏳ 等待收盤...", "賣出價": 0.0, "實現損益": 0.0}])
                 conn.update(data=pd.concat([existing_df, new_row], ignore_index=True)); st.cache_data.clear(); st.rerun()
 
     with st.expander("🌇 Step 2: 盤後統整"):
-        waiting = existing_df[existing_df['盤後紀錄'] == "⏳ 等待更新..."]
+        waiting = existing_df[existing_df['盤後紀錄'] == "⏳ 等待收盤..."]
         if not waiting.empty:
-            with st.form("post_market_f", clear_on_submit=True):
+            with st.form("post_market_form", clear_on_submit=True):
                 target = st.selectbox("選取標的", waiting.apply(lambda x: f"{x['日期']} - {x['標的']}", axis=1))
-                res_pct = st.number_input("漲跌 %", step=0.01, format="%.2f")
+                res_pct = st.number_input("漲跌結果 %", step=0.01, format="%.2f")
                 res_post = st.text_area("📝 盤後回饋")
-                if st.form_submit_button("💾 儲存"):
+                if st.form_submit_button("💾 統整完成"):
                     sd, sn = target.split(" - ", 1)
                     idx = existing_df[(existing_df['日期']==sd) & (existing_df['標的']==sn)].index[0]
                     existing_df.at[idx, '漲跌%'], existing_df.at[idx, '盤後紀錄'] = float(res_pct), res_post
                     conn.update(data=existing_df); st.cache_data.clear(); st.rerun()
+        else: st.info("目前無待統整計畫。")
 
     with st.expander("🛒 實單庫存登錄"):
-        with st.form("buy_real_f"):
+        with st.form("buy_real"):
             br_date = st.date_input("買進日期", value=date.today())
             br_name, br_symbol = st.text_input("名稱"), st.text_input("代號")
             br_price = st.number_input("均價", min_value=0.0); br_qty = st.number_input("股數", min_value=1, value=100)
-            if st.form_submit_button("✅ 加入"):
+            if st.form_submit_button("✅ 加入持倉"):
                 new_r = pd.DataFrame([{"日期": br_date.strftime("%m/%d"), "標的": br_name, "代號": br_symbol, "操作": "買進", "成本": float(br_price), "股數": int(br_qty), "投入金額": br_price*br_qty, "漲跌%": 0.0, "盤後紀錄": "實單持倉中"}])
                 conn.update(data=pd.concat([existing_df, new_r], ignore_index=True)); st.cache_data.clear(); st.rerun()
 
-# --- 主畫面顯示 ---
+    # 💡 找回刪除功能
+    with st.expander("🗑️ 管理/刪除追蹤標的"):
+        track_only = existing_df[existing_df['操作'] == '追蹤']['標的'].unique()
+        if len(track_only) > 0:
+            del_t = st.selectbox("選取要刪除的追蹤", track_only)
+            if st.button("🚨 確認刪除"):
+                new_df = existing_df[~((existing_df['標的'] == del_t) & (existing_df['操作'] == '追蹤'))]
+                conn.update(data=new_df); st.cache_data.clear(); st.rerun()
+        else: st.info("目前無純新聞追蹤標的。")
+
+# --- 主畫面運算 ---
 try:
     df = existing_df.dropna(subset=['標的']).copy()
     df['標的'] = df['標的'].astype(str).str.replace(r'\d+', '', regex=True).str.strip()
@@ -139,7 +150,7 @@ try:
     total_profit = total_realized + total_unrealized
     equity = INITIAL_CAPITAL + total_profit; used_cap = active_df['投入金額'].sum(); rem_cap = (INITIAL_CAPITAL + total_realized) - used_cap
 
-    # 🎯 核心看板 (使用強制網格 CSS)
+    # 1. 核心看板 (強制 3 欄排列)
     st.markdown("### 🏦 真實資產結算看板")
     p_c = "#1b5e20" if total_profit >= 0 else "#b71c1c"; p_b = "#e8f5e9" if total_profit >= 0 else "#ffebee"
     st.markdown(f"""
@@ -153,16 +164,15 @@ try:
     </div>
     """, unsafe_allow_html=True)
 
-    if ready_to_sell:
-        st.error(f"🚨 停利提示：{', '.join(ready_to_sell)}")
+    if ready_to_sell: st.error(f"🚨 停利提示：{', '.join(ready_to_sell)}")
 
-    # 3. 頁籤回歸樣式
+    # 3. 頁籤回歸核心
     t1, t2, t3, t4 = st.tabs(["💼 實單持股", "📰 即時新聞區", "📅 歷史日誌 (統整)", "🗂️ 個股深度追蹤"])
     
     with t1:
         if active_holdings:
             st.dataframe(pd.DataFrame(active_holdings), use_container_width=True, hide_index=True, column_config={"損益率%": st.column_config.NumberColumn(format="%.2f%%")})
-        else: st.info("目前無持倉。")
+        else: st.info("目前無持倉紀錄。")
 
     with t2:
         news_w = sorted(list(set(list(active_df['標的'].unique()) + list(df[df['操作'] == '追蹤']['標的'].unique()))))
@@ -171,9 +181,9 @@ try:
                 for n in fetch_stock_news(s):
                     st.markdown(f"<div style='padding:8px; border-bottom:1px solid #eee;'><a href='{n['連結']}' target='_blank' style='text-decoration:none; color:#1e88e5; font-weight:bold;'>{n['標題']}</a><br><small style='color:gray;'>{n['來源']} | {n['發布']}</small></div>", unsafe_allow_html=True)
 
-    completed = df[~df['盤後紀錄'].isin(["實單持倉中", "⏳ 等待更新...", "僅新聞追蹤"])].copy()
+    completed = df[~df['盤後紀錄'].isin(["實單持倉中", "⏳ 等待收盤...", "僅新聞追蹤"])].copy()
     
-    with t3: # 💡 歷史日誌：日期分類收合
+    with t3: # 💡 歷史日誌：日期收合
         if not completed.empty:
             for d in sorted(completed['日期'].unique(), reverse=True):
                 with st.expander(f"🗓️ {d} 操盤戰報", expanded=(d == completed['日期'].max())):
@@ -181,7 +191,7 @@ try:
                         res_c = "#ef5350" if r['漲跌%'] > 0 else ("#26a69a" if r['漲跌%'] < 0 else "gray")
                         bg = "#ef5350" if r['操作'] == '買進' else "#bdbdbd"
                         st.markdown(f"""
-                        <div style="border-left:6px solid {res_c}; padding:12px; background:white; margin-bottom:10px; border-radius:8px; border: 1px solid #eee;">
+                        <div style="border-left:6px solid {res_c}; padding:15px; background:white; margin-bottom:12px; border-radius:8px; border: 1px solid #eee;">
                             <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
                                 <span style='background-color:{bg}; color:white; padding:2px 8px; border-radius:4px; font-size:0.8rem;'>{r['操作']}</span>
                                 <strong>{r['標的']}</strong>
@@ -193,18 +203,22 @@ try:
                         """, unsafe_allow_html=True)
         else: st.info("尚無統整紀錄。")
 
-    with t4:
+    with t4: # 💡 找回：個股深度追蹤 (📌 圖釘樣式)
         if not completed.empty:
             for t in sorted(completed['標的'].unique()):
-                with st.expander(f"📌 {t}"):
-                    for _, row in completed[completed['標的'] == t].sort_values(by='日期', ascending=False).iterrows():
+                t_df = completed[completed['標的'] == t].sort_values(by='日期', ascending=False)
+                with st.expander(f"📌 {t} (紀錄：{len(t_df)} 筆)"):
+                    for _, row in t_df.iterrows():
                         c = "#ef5350" if row['漲跌%'] > 0 else ("#26a69a" if row['漲跌%'] < 0 else "#bdbdbd")
                         st.markdown(f"<div style='border-left:5px solid {c}; padding:10px; background:#f8f9fa; margin-bottom:10px; border-radius:4px;'><b>{row['日期']} | <span style='color:{c};'>{row['漲跌%']:.2f}%</span></b><br><small>🔍 {row['盤前觀察']}</small><br><small>📝 {row['盤後紀錄']}</small></div>", unsafe_allow_html=True)
 
-    # 底部勝率
+    # 4. 找回：底部勝率與圓餅圖
     st.divider()
     c_buy = completed[completed['操作'] == '買進']
     w_r = (len(c_buy[c_buy['漲跌%'] > 0]) / len(c_buy) * 100) if not c_buy.empty else 0.0
-    st.markdown(f"<div><span style='font-size:1rem; color:#555;'>📊 預判勝率</span><br><span style='font-size:2rem; font-weight:bold; color:#2196f3;'>{w_r:.1f}%</span></div>", unsafe_allow_html=True)
+    st.markdown(f"<div><span style='font-size:1.1rem; color:#555;'>📊 實際預判勝率</span><br><span style='font-size:2.5rem; font-weight:bold; color:#2196f3;'>{w_r:.1f}%</span></div>", unsafe_allow_html=True)
+    if not df.empty:
+        fig = px.pie(df, names='操作', hole=0.4, color='操作', color_discrete_map={'買進':'#2196f3', '觀察':'#bdbdbd', '追蹤':'#ffeb3b'})
+        fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=300); st.plotly_chart(fig, use_container_width=True)
 
 except Exception as e: st.info(f"系統準備中... ({e})")
