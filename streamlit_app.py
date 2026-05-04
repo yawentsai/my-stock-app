@@ -77,17 +77,6 @@ st_autorefresh(interval=60000, limit=1000, key="global_v87_final")
 INITIAL_CAPITAL = 100000
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-try:
-    existing_df = conn.read(ttl=0)
-except:
-    existing_df = pd.DataFrame(columns=['日期', '標的', '代號', '操作', '成本', '股數', '投入金額', '漲跌%', '盤前觀察', '盤後紀錄', '賣出價', '實現損益'])
-
-# 💡 核心修正：強制將「代號」轉換為乾淨的純文字，防止數字與文字比對失敗
-existing_df['代號'] = existing_df['代號'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-
-for col in ['成本', '股數', '投入金額', '賣出價', '實現損益', '漲跌%']:
-    existing_df[col] = pd.to_numeric(existing_df[col], errors='coerce').fillna(0.0)
-
 @st.cache_data(ttl=1800)
 def fetch_stock_news(stock_name):
     news_list = []
@@ -112,6 +101,21 @@ def get_live_price(symbol):
             ticker = f"{symbol}.TWO"
             return yf.Ticker(ticker).fast_info['last_price']
         except: return None
+
+# --- 資料庫讀取與強制字串清洗 ---
+try:
+    existing_df = conn.read(ttl=0)
+    existing_df = existing_df.reset_index(drop=True) # 確保索引絕對乾淨
+except:
+    existing_df = pd.DataFrame(columns=['日期', '標的', '代號', '操作', '成本', '股數', '投入金額', '漲跌%', '盤前觀察', '盤後紀錄', '賣出價', '實現損益'])
+
+# 💡 核心修正：強制消除空白鍵與隱形的小數點，確保新舊資料格式絕對統一
+existing_df['代號'] = existing_df['代號'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+existing_df['標的'] = existing_df['標的'].astype(str).str.strip()
+existing_df['盤後紀錄'] = existing_df['盤後紀錄'].astype(str).str.strip()
+
+for col in ['成本', '股數', '投入金額', '賣出價', '實現損益', '漲跌%']:
+    existing_df[col] = pd.to_numeric(existing_df[col], errors='coerce').fillna(0.0)
 
 with st.sidebar:
     st.header("⚡ 系統控制區")
@@ -164,7 +168,9 @@ with st.sidebar:
                     br_n = br_n.strip()
                     br_s = br_s.strip()
                     
-                    active_idx = existing_df[(existing_df['盤後紀錄'] == "實單持倉中") & (existing_df['代號'] == br_s)].index
+                    # 💡 核心更新：雙網比對，只要名稱或代號對得上，就強制合併
+                    match_cond = (existing_df['盤後紀錄'] == "實單持倉中") & ((existing_df['標的'] == br_n) | ((existing_df['代號'] == br_s) & (br_s != "")))
+                    active_idx = existing_df[match_cond].index
                     
                     if not active_idx.empty:
                         # 執行加碼合併邏輯
@@ -176,10 +182,10 @@ with st.sidebar:
                         new_amt = old_amt + (float(br_p) * int(br_q))
                         new_p = new_amt / new_q  # 加權平均成本
                         
-                        existing_df.at[idx, '股數'] = new_q
-                        existing_df.at[idx, '投入金額'] = new_amt
-                        existing_df.at[idx, '成本'] = new_p
-                        existing_df.at[idx, '日期'] = br_date.strftime("%m/%d") # 更新為最後加碼日
+                        existing_df.loc[idx, '股數'] = new_q
+                        existing_df.loc[idx, '投入金額'] = new_amt
+                        existing_df.loc[idx, '成本'] = new_p
+                        existing_df.loc[idx, '日期'] = br_date.strftime("%m/%d") # 更新為最後加碼日
                         
                         conn.update(data=existing_df)
                     else:
