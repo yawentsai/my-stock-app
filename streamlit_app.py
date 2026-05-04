@@ -8,7 +8,7 @@ from streamlit_autorefresh import st_autorefresh
 import requests
 from bs4 import BeautifulSoup
 import urllib.parse
-import re  # ❗ 新增：正規表達式模組，用來自動抓取 1. 2. 3. 進行排版
+import re
 
 # 1. 基礎設定與手機版網格鎖定
 st.set_page_config(page_title="零股追蹤神器", layout="wide")
@@ -48,17 +48,12 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- 輔助排版函數：自動產生條列式切齊 ---
 def format_list_text(text):
     if not isinstance(text, str) or not text.strip(): return ""
-    # 先將手動換行轉為 HTML 換行
     text = text.replace('\n', '<br>')
-    # 自動偵測 "數字. " 並在前面加上換行 (避開已經換行的部分)
     text = re.sub(r'(?<!^)(?<!<br>)\s*(\b\d+\.\s*)', r'<br>\1', text)
-    # 套用懸掛縮排 (Hanging Indent)，讓多行文字完美切齊數字右側
     return f'<div style="padding-left: 1.4em; text-indent: -1.4em; margin-top: 4px;">{text}</div>'
 
-# --- LINE 通知核心函數 ---
 def send_line_message(message):
     try:
         token = st.secrets["LINE_CHANNEL_ACCESS_TOKEN"]
@@ -77,13 +72,11 @@ def send_line_message(message):
     except:
         return False
 
-# 2. 自動刷新 (60秒)
 st_autorefresh(interval=60000, limit=1000, key="global_v87_final")
 
 INITIAL_CAPITAL = 100000
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- 工具函數 ---
 @st.cache_data(ttl=1800)
 def fetch_stock_news(stock_name):
     news_list = []
@@ -109,7 +102,6 @@ def get_live_price(symbol):
             return yf.Ticker(ticker).fast_info['last_price']
         except: return None
 
-# --- 讀取資料庫 ---
 try:
     existing_df = conn.read(ttl=0)
 except:
@@ -118,7 +110,6 @@ except:
 for col in ['成本', '股數', '投入金額', '賣出價', '實現損益', '漲跌%']:
     existing_df[col] = pd.to_numeric(existing_df[col], errors='coerce').fillna(0.0)
 
-# --- 側邊欄：功能全開 ---
 with st.sidebar:
     st.header("⚡ 系統控制區")
     
@@ -146,24 +137,42 @@ with st.sidebar:
         if not waiting.empty:
             with st.form("post_m", clear_on_submit=True):
                 target = st.selectbox("選取標的", waiting.apply(lambda x: f"{x['日期']} - {x['標的']}", axis=1))
+                final_action = st.selectbox("最終決策 (將覆寫盤前預設)", ["維持盤前規劃", "✅ 買進", "觀察"])
                 res_pct = st.number_input("漲跌 %", step=0.01, format="%.2f")
                 res_post = st.text_area("📝 盤後回饋")
                 if st.form_submit_button("💾 儲存"):
                     sd, sn = target.split(" - ", 1)
                     idx = existing_df[(existing_df['日期']==sd) & (existing_df['標的']==sn)].index[0]
+                    if final_action != "維持盤前規劃":
+                        existing_df.at[idx, '操作'] = "買進" if "買進" in final_action else "觀察"
                     existing_df.at[idx, '漲跌%'], existing_df.at[idx, '盤後紀錄'] = float(res_pct), res_post
                     conn.update(data=existing_df); st.cache_data.clear(); st.rerun()
 
     st.divider()
 
-    with st.expander("🛒 實單庫存：買入登錄"):
-        with st.form("buy_f"):
-            br_date = st.date_input("日期", value=date.today())
-            br_n, br_s = st.text_input("名稱"), st.text_input("代號")
-            br_p = st.number_input("均價", min_value=0.0); br_q = st.number_input("股數", min_value=1, value=100)
-            if st.form_submit_button("✅ 加入持倉"):
-                new_r = pd.DataFrame([{"日期": br_date.strftime("%m/%d"), "標的": br_n, "代號": br_s, "操作": "買進", "成本": float(br_p), "股數": int(br_q), "投入金額": br_p*br_q, "漲跌%": 0.0, "盤後紀錄": "實單持倉中"}])
-                conn.update(data=pd.concat([existing_df, new_r], ignore_index=True)); st.cache_data.clear(); st.rerun()
+    with st.expander("🛒 實單庫存：買入 / 刪除登錄"):
+        tb_buy, tb_del = st.tabs(["✅ 買入登錄", "🗑️ 刪除誤植"])
+        with tb_buy:
+            with st.form("buy_f"):
+                br_date = st.date_input("日期", value=date.today())
+                br_n, br_s = st.text_input("名稱"), st.text_input("代號")
+                br_p = st.number_input("均價", min_value=0.0); br_q = st.number_input("股數", min_value=1, value=100)
+                if st.form_submit_button("✅ 加入持倉"):
+                    new_r = pd.DataFrame([{"日期": br_date.strftime("%m/%d"), "標的": br_n, "代號": br_s, "操作": "買進", "成本": float(br_p), "股數": int(br_q), "投入金額": br_p*br_q, "漲跌%": 0.0, "盤後紀錄": "實單持倉中"}])
+                    conn.update(data=pd.concat([existing_df, new_r], ignore_index=True)); st.cache_data.clear(); st.rerun()
+        with tb_del:
+            active_h_del = existing_df[existing_df['盤後紀錄'] == "實單持倉中"]
+            if not active_h_del.empty:
+                with st.form("del_buy_f"):
+                    st.info("⚠️ 僅用於刪除『輸入錯誤』的紀錄，若是正常獲利/停損了結，請使用下方『賣出結算』。")
+                    # 使用 x.name 鎖定資料庫絕對索引，確保精準刪除
+                    del_sel = st.selectbox("選取要刪除的持倉", active_h_del.apply(lambda x: f"{x.name} | {x['日期']} - {x['標的']} (均價:{x['成本']})", axis=1))
+                    if st.form_submit_button("🗑️ 確認刪除"):
+                        idx_to_drop = int(del_sel.split(" | ")[0])
+                        existing_df = existing_df.drop(idx_to_drop)
+                        conn.update(data=existing_df); st.cache_data.clear(); st.rerun()
+            else:
+                st.write("目前無持倉可刪除。")
 
     with st.expander("💸 實單庫存：賣出結算"):
         active_h = existing_df[existing_df['盤後紀錄'] == "實單持倉中"]
@@ -220,7 +229,9 @@ try:
         p_twd = (cp - row['成本']) * row['股數'] if cp else 0.0
         total_unrealized += p_twd
         active_holdings.append({'日期': row['日期'], '標的': row['標的'], '代號': row['代號'], '均價': row['成本'], '股數': row['股數'], '現價': cp if cp else "...", '損益金額': p_twd, '損益率%': p_pct})
-        if p_pct >= 2.0: ready_to_sell.append(f"{row['標的']} (+{p_pct:.2f}%)")
+        
+        # 💡 更新：改為存入字典，方便後續 HTML 結構化排版
+        if p_pct >= 2.0: ready_to_sell.append({'name': row['標的'], 'symbol': row['代號'], 'pct': p_pct})
     
     total_profit = total_realized + total_unrealized
     equity = INITIAL_CAPITAL + total_profit; used_cap = active_df['投入金額'].sum(); rem_cap = (INITIAL_CAPITAL + total_realized) - used_cap
@@ -230,8 +241,21 @@ try:
     st.markdown(f"""<div class="dashboard-grid"><div class="metric-card"><div class="metric-label">總資產權益</div><div class="metric-value">${equity:,.0f}</div></div><div class="metric-card" style="background:{p_b}; border-color:{p_c}22;"><div class="metric-label" style="color:{p_c};">🎯 累計獲利</div><div class="metric-value" style="color:{p_c};">${total_profit:,.0f}</div></div><div class="metric-card"><div class="metric-label">📈 ROI</div><div class="metric-value">{(total_profit/INITIAL_CAPITAL)*100:.2f}%</div></div><div class="metric-card" style="background:#fff3e0;"><div class="metric-label" style="color:#e65100;">已投入資金</div><div class="metric-value" style="color:#e65100;">${used_cap:,.0f}</div></div><div class="metric-card"><div class="metric-label">可用現金</div><div class="metric-value">${rem_cap:,.0f}</div></div><div class="metric-card"><div class="metric-label">利用率</div><div class="metric-value">{(used_cap/(INITIAL_CAPITAL+total_realized))*100:.1f}%</div></div></div>""", unsafe_allow_html=True)
 
     if ready_to_sell:
-        status_msg = f"🚨 停利標準已達標 (2%↑)：{', '.join(ready_to_sell)}"
-        st.markdown(f"""<div class="status-box" style="background-color:#ffebee; color:#b71c1c; border:2px solid #ef5350;">{status_msg}</div>""", unsafe_allow_html=True)
+        count = len(ready_to_sell)
+        # 💡 更新：利用 Flexbox 讓名稱與獲利 % 數左右精準對齊
+        items_html = "".join([f"<div style='display: flex; justify-content: space-between; border-bottom: 1px dashed #ffcdd2; padding: 6px 0;'><span style='font-weight:bold; color:#b71c1c;'>{item['name']} ({item['symbol']})</span><span style='font-weight:bold; color:#c62828;'>+{item['pct']:.2f}%</span></div>" for item in ready_to_sell])
+        
+        status_msg = f"""
+        <div style="text-align: left; padding: 4px;">
+            <div style="font-weight: bold; margin-bottom: 8px; font-size: 1.05rem; border-bottom: 2px solid #ef5350; padding-bottom: 6px; color: #b71c1c;">
+                🚨 停利標準已達標 (共 {count} 檔等待結算)：
+            </div>
+            <div style="padding: 0 5px;">
+                {items_html}
+            </div>
+        </div>
+        """
+        st.markdown(f"""<div class="status-box" style="background-color:#ffebee; border:2px solid #ef5350; margin-bottom:20px;">{status_msg}</div>""", unsafe_allow_html=True)
     else:
         st.markdown("""<div class="status-box" style="background-color:#e8f5e9; color:#2e7d32; border:1px dashed #4caf50;">✅ 目前持股獲利尚未達 2% 停利標準，請繼續耐心持有。</div>""", unsafe_allow_html=True)
 
@@ -239,7 +263,12 @@ try:
     
     with t1:
         if active_holdings:
-            st.dataframe(pd.DataFrame(active_holdings), use_container_width=True, hide_index=True, column_config={"損益率%": st.column_config.NumberColumn(format="%.2f%%")})
+            # 💡 更新：強制修正現價與損益金額的浮點數亂碼問題，維持版面乾淨
+            st.dataframe(pd.DataFrame(active_holdings), use_container_width=True, hide_index=True, column_config={
+                "現價": st.column_config.NumberColumn(format="%.2f"),
+                "損益金額": st.column_config.NumberColumn(format="%.0f"),
+                "損益率%": st.column_config.NumberColumn(format="%.2f%%")
+            })
         else: st.info("目前無持倉。")
 
     with t2:
