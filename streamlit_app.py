@@ -165,7 +165,6 @@ with st.sidebar:
             if not active_h_del.empty:
                 with st.form("del_buy_f"):
                     st.info("⚠️ 僅用於刪除『輸入錯誤』的紀錄，若是正常獲利/停損了結，請使用下方『賣出結算』。")
-                    # 使用 x.name 鎖定資料庫絕對索引，確保精準刪除
                     del_sel = st.selectbox("選取要刪除的持倉", active_h_del.apply(lambda x: f"{x.name} | {x['日期']} - {x['標的']} (均價:{x['成本']})", axis=1))
                     if st.form_submit_button("🗑️ 確認刪除"):
                         idx_to_drop = int(del_sel.split(" | ")[0])
@@ -230,8 +229,8 @@ try:
         total_unrealized += p_twd
         active_holdings.append({'日期': row['日期'], '標的': row['標的'], '代號': row['代號'], '均價': row['成本'], '股數': row['股數'], '現價': cp if cp else "...", '損益金額': p_twd, '損益率%': p_pct})
         
-        # 💡 更新：改為存入字典，方便後續 HTML 結構化排版
-        if p_pct >= 2.0: ready_to_sell.append({'name': row['標的'], 'symbol': row['代號'], 'pct': p_pct})
+        # 💡 更新：將停利觸發標準改為 5.0%
+        if p_pct >= 5.0: ready_to_sell.append({'name': row['標的'], 'symbol': row['代號'], 'pct': p_pct})
     
     total_profit = total_realized + total_unrealized
     equity = INITIAL_CAPITAL + total_profit; used_cap = active_df['投入金額'].sum(); rem_cap = (INITIAL_CAPITAL + total_realized) - used_cap
@@ -242,7 +241,6 @@ try:
 
     if ready_to_sell:
         count = len(ready_to_sell)
-        # 💡 更新：利用 Flexbox 讓名稱與獲利 % 數左右精準對齊
         items_html = "".join([f"<div style='display: flex; justify-content: space-between; border-bottom: 1px dashed #ffcdd2; padding: 6px 0;'><span style='font-weight:bold; color:#b71c1c;'>{item['name']} ({item['symbol']})</span><span style='font-weight:bold; color:#c62828;'>+{item['pct']:.2f}%</span></div>" for item in ready_to_sell])
         
         status_msg = f"""
@@ -257,13 +255,13 @@ try:
         """
         st.markdown(f"""<div class="status-box" style="background-color:#ffebee; border:2px solid #ef5350; margin-bottom:20px;">{status_msg}</div>""", unsafe_allow_html=True)
     else:
-        st.markdown("""<div class="status-box" style="background-color:#e8f5e9; color:#2e7d32; border:1px dashed #4caf50;">✅ 目前持股獲利尚未達 2% 停利標準，請繼續耐心持有。</div>""", unsafe_allow_html=True)
+        # 💡 更新：前端提示文字同步改為 5%
+        st.markdown("""<div class="status-box" style="background-color:#e8f5e9; color:#2e7d32; border:1px dashed #4caf50;">✅ 目前持股獲利尚未達 5% 停利標準，請繼續耐心持有。</div>""", unsafe_allow_html=True)
 
     t1, t2, t3, t4 = st.tabs(["💼 實單持股", "📰 即時新聞區", "📅 歷史日誌 (統整)", "🗂️ 個股深度追蹤"])
     
     with t1:
         if active_holdings:
-            # 💡 更新：強制修正現價與損益金額的浮點數亂碼問題，維持版面乾淨
             st.dataframe(pd.DataFrame(active_holdings), use_container_width=True, hide_index=True, column_config={
                 "現價": st.column_config.NumberColumn(format="%.2f"),
                 "損益金額": st.column_config.NumberColumn(format="%.0f"),
