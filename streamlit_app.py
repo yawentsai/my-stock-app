@@ -77,6 +77,17 @@ st_autorefresh(interval=60000, limit=1000, key="global_v87_final")
 INITIAL_CAPITAL = 100000
 conn = st.connection("gsheets", type=GSheetsConnection)
 
+try:
+    existing_df = conn.read(ttl=0)
+except:
+    existing_df = pd.DataFrame(columns=['日期', '標的', '代號', '操作', '成本', '股數', '投入金額', '漲跌%', '盤前觀察', '盤後紀錄', '賣出價', '實現損益'])
+
+# 💡 核心修正：強制將「代號」轉換為乾淨的純文字，防止數字與文字比對失敗
+existing_df['代號'] = existing_df['代號'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+
+for col in ['成本', '股數', '投入金額', '賣出價', '實現損益', '漲跌%']:
+    existing_df[col] = pd.to_numeric(existing_df[col], errors='coerce').fillna(0.0)
+
 @st.cache_data(ttl=1800)
 def fetch_stock_news(stock_name):
     news_list = []
@@ -101,14 +112,6 @@ def get_live_price(symbol):
             ticker = f"{symbol}.TWO"
             return yf.Ticker(ticker).fast_info['last_price']
         except: return None
-
-try:
-    existing_df = conn.read(ttl=0)
-except:
-    existing_df = pd.DataFrame(columns=['日期', '標的', '代號', '操作', '成本', '股數', '投入金額', '漲跌%', '盤前觀察', '盤後紀錄', '賣出價', '實現損益'])
-
-for col in ['成本', '股數', '投入金額', '賣出價', '實現損益', '漲跌%']:
-    existing_df[col] = pd.to_numeric(existing_df[col], errors='coerce').fillna(0.0)
 
 with st.sidebar:
     st.header("⚡ 系統控制區")
@@ -160,7 +163,7 @@ with st.sidebar:
                 if st.form_submit_button("✅ 加入持倉"):
                     br_n = br_n.strip()
                     br_s = br_s.strip()
-                    # 💡 核心更新：檢查是否為加碼動作
+                    
                     active_idx = existing_df[(existing_df['盤後紀錄'] == "實單持倉中") & (existing_df['代號'] == br_s)].index
                     
                     if not active_idx.empty:
