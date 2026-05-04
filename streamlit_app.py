@@ -6,8 +6,6 @@ from datetime import datetime, date
 import yfinance as yf
 from streamlit_autorefresh import st_autorefresh
 import requests
-from bs4 import BeautifulSoup
-import urllib.parse
 import re
 
 # 1. 基礎設定與手機版網格鎖定
@@ -77,19 +75,6 @@ st_autorefresh(interval=60000, limit=1000, key="global_v87_final")
 INITIAL_CAPITAL = 100000
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-@st.cache_data(ttl=1800)
-def fetch_stock_news(stock_name):
-    news_list = []
-    try:
-        query = urllib.parse.quote(f"{stock_name}")
-        url = f"https://news.google.com/rss/search?q={query}+when:3d&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
-        resp = requests.get(url, timeout=5)
-        soup = BeautifulSoup(resp.content, features="xml")
-        for item in soup.findAll('item')[:8]:
-            news_list.append({"標題": item.title.text, "連結": item.link.text, "來源": item.source.text, "發布": item.pubDate.text})
-    except: pass
-    return news_list
-
 @st.cache_data(ttl=60)
 def get_live_price(symbol):
     if not symbol or symbol == "": return None
@@ -105,11 +90,10 @@ def get_live_price(symbol):
 # --- 資料庫讀取與強制字串清洗 ---
 try:
     existing_df = conn.read(ttl=0)
-    existing_df = existing_df.reset_index(drop=True) # 確保索引絕對乾淨
+    existing_df = existing_df.reset_index(drop=True) 
 except:
     existing_df = pd.DataFrame(columns=['日期', '標的', '代號', '操作', '成本', '股數', '投入金額', '漲跌%', '盤前觀察', '盤後紀錄', '賣出價', '實現損益'])
 
-# 💡 核心修正：強制消除空白鍵與隱形的小數點，確保新舊資料格式絕對統一
 existing_df['代號'] = existing_df['代號'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
 existing_df['標的'] = existing_df['標的'].astype(str).str.strip()
 existing_df['盤後紀錄'] = existing_df['盤後紀錄'].astype(str).str.strip()
@@ -168,28 +152,25 @@ with st.sidebar:
                     br_n = br_n.strip()
                     br_s = br_s.strip()
                     
-                    # 💡 核心更新：雙網比對，只要名稱或代號對得上，就強制合併
                     match_cond = (existing_df['盤後紀錄'] == "實單持倉中") & ((existing_df['標的'] == br_n) | ((existing_df['代號'] == br_s) & (br_s != "")))
                     active_idx = existing_df[match_cond].index
                     
                     if not active_idx.empty:
-                        # 執行加碼合併邏輯
                         idx = active_idx[0]
                         old_q = existing_df.at[idx, '股數']
                         old_amt = existing_df.at[idx, '投入金額']
                         
                         new_q = old_q + int(br_q)
                         new_amt = old_amt + (float(br_p) * int(br_q))
-                        new_p = new_amt / new_q  # 加權平均成本
+                        new_p = new_amt / new_q  
                         
                         existing_df.loc[idx, '股數'] = new_q
                         existing_df.loc[idx, '投入金額'] = new_amt
                         existing_df.loc[idx, '成本'] = new_p
-                        existing_df.loc[idx, '日期'] = br_date.strftime("%m/%d") # 更新為最後加碼日
+                        existing_df.loc[idx, '日期'] = br_date.strftime("%m/%d") 
                         
                         conn.update(data=existing_df)
                     else:
-                        # 執行全新買進邏輯
                         new_r = pd.DataFrame([{"日期": br_date.strftime("%m/%d"), "標的": br_n, "代號": br_s, "操作": "買進", "成本": float(br_p), "股數": int(br_q), "投入金額": br_p*br_q, "漲跌%": 0.0, "盤後紀錄": "實單持倉中"}])
                         conn.update(data=pd.concat([existing_df, new_r], ignore_index=True))
                         
@@ -231,21 +212,6 @@ with st.sidebar:
                         existing_df.at[idx, '賣出價'], existing_df.at[idx, '實現損益'] = sr_p, (sr_p - cp) * q_orig
                         existing_df.at[idx, '漲跌%'], existing_df.at[idx, '盤後紀錄'] = ((sr_p - cp)/cp)*100, f"清倉：{sr_n}"
                     conn.update(data=existing_df); st.cache_data.clear(); st.rerun()
-
-    st.divider()
-
-    with st.expander("🔔 加入/管理新聞追蹤"):
-        with st.form("add_n"):
-            an_n, an_s = st.text_input("股票名稱"), st.text_input("代號")
-            if st.form_submit_button("📡 開始追蹤") and an_n:
-                new_r = pd.DataFrame([{"日期": date.today().strftime("%m/%d"), "標的": an_n.strip(), "代號": an_s.strip(), "操作": "追蹤", "盤後紀錄": "僅新聞追蹤"}])
-                conn.update(data=pd.concat([existing_df, new_r], ignore_index=True)); st.cache_data.clear(); st.rerun()
-        track_list = existing_df[existing_df['操作'] == '追蹤']['標的'].unique()
-        if len(track_list) > 0:
-            del_t = st.selectbox("移除追蹤標的", track_list)
-            if st.button("🗑️ 確認刪除"):
-                new_df = existing_df[~((existing_df['標的'] == del_t) & (existing_df['操作'] == '追蹤'))]
-                conn.update(data=new_df); st.cache_data.clear(); st.rerun()
 
 # --- 主畫面顯示 ---
 try:
@@ -290,7 +256,8 @@ try:
     else:
         st.markdown("""<div class="status-box" style="background-color:#e8f5e9; color:#2e7d32; border:1px dashed #4caf50;">✅ 目前持股獲利尚未達 5% 停利標準，請繼續耐心持有。</div>""", unsafe_allow_html=True)
 
-    t1, t2, t3, t4 = st.tabs(["💼 實單持股", "📰 即時新聞區", "📅 歷史日誌 (統整)", "🗂️ 個股深度追蹤"])
+    # 💡 移除新聞頁籤，精簡為三個核心區域
+    t1, t2, t3 = st.tabs(["💼 實單持股", "📅 歷史日誌 (統整)", "🗂️ 個股深度追蹤"])
     
     with t1:
         if active_holdings:
@@ -302,16 +269,9 @@ try:
             })
         else: st.info("目前無持倉。")
 
-    with t2:
-        news_w = sorted(list(set(list(active_df['標的'].unique()) + list(df[df['操作'] == '追蹤']['標的'].unique()))))
-        for s in news_w:
-            with st.expander(f"📢 {s} - 情報監控", expanded=True):
-                for n in fetch_stock_news(s):
-                    st.markdown(f"<div style='padding:8px; border-bottom:1px solid #eee;'><a href='{n['連結']}' target='_blank' style='text-decoration:none; color:#1e88e5; font-weight:bold;'>{n['標題']}</a><br><small style='color:gray;'>{n['來源']} | {n['發布']}</small></div>", unsafe_allow_html=True)
-
     completed = df[~df['盤後紀錄'].isin(["實單持倉中", "僅新聞追蹤"])].copy()
     
-    with t3:
+    with t2:
         if not completed.empty:
             for d in sorted(completed['日期'].unique(), reverse=True):
                 with st.expander(f"🗓️ {d} 操盤戰報", expanded=(d == completed['日期'].max())):
@@ -338,7 +298,7 @@ try:
                         </div>
                         """, unsafe_allow_html=True)
 
-    with t4:
+    with t3:
         if not completed.empty:
             for t in sorted(completed['標的'].unique()):
                 t_df = completed[completed['標的'] == t].sort_values(by='日期', ascending=False)
