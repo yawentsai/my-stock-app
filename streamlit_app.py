@@ -72,7 +72,6 @@ def send_line_message(message):
 
 st_autorefresh(interval=60000, limit=1000, key="global_v87_final")
 
-INITIAL_CAPITAL = 100000
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 @st.cache_data(ttl=60)
@@ -104,6 +103,11 @@ for col in ['成本', '股數', '投入金額', '賣出價', '實現損益', '�
 with st.sidebar:
     st.header("⚡ 系統控制區")
     
+    # 💡 新增：資金控管區塊，預設值設定為 15 萬，妳可以隨時修改
+    st.subheader("💰 資金控管")
+    INITIAL_CAPITAL = st.number_input("當前總本金 (可隨時增減)", min_value=0, value=150000, step=10000)
+    st.divider()
+
     st.subheader("🔔 通知測試")
     if st.button("發送 LINE 測試通知"):
         if send_line_message("✅ 零股追蹤神器：連線測試成功！"):
@@ -232,6 +236,7 @@ try:
         if p_pct >= 5.0: ready_to_sell.append({'name': row['標的'], 'symbol': row['代號'], 'pct': p_pct})
     
     total_profit = total_realized + total_unrealized
+    # 💡 資金計算全面套用側邊欄自訂的 INITIAL_CAPITAL
     equity = INITIAL_CAPITAL + total_profit; used_cap = active_df['投入金額'].sum(); rem_cap = (INITIAL_CAPITAL + total_realized) - used_cap
 
     st.markdown("### 🏦 真實資產結算看板")
@@ -256,7 +261,6 @@ try:
     else:
         st.markdown("""<div class="status-box" style="background-color:#e8f5e9; color:#2e7d32; border:1px dashed #4caf50;">✅ 目前持股獲利尚未達 5% 停利標準，請繼續耐心持有。</div>""", unsafe_allow_html=True)
 
-    # 💡 移除新聞頁籤，精簡為三個核心區域
     t1, t2, t3 = st.tabs(["💼 實單持股", "📅 歷史日誌 (統整)", "🗂️ 個股深度追蹤"])
     
     with t1:
