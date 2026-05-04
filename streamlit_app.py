@@ -158,14 +158,39 @@ with st.sidebar:
                 br_n, br_s = st.text_input("名稱"), st.text_input("代號")
                 br_p = st.number_input("均價", min_value=0.0); br_q = st.number_input("股數", min_value=1, value=100)
                 if st.form_submit_button("✅ 加入持倉"):
-                    new_r = pd.DataFrame([{"日期": br_date.strftime("%m/%d"), "標的": br_n, "代號": br_s, "操作": "買進", "成本": float(br_p), "股數": int(br_q), "投入金額": br_p*br_q, "漲跌%": 0.0, "盤後紀錄": "實單持倉中"}])
-                    conn.update(data=pd.concat([existing_df, new_r], ignore_index=True)); st.cache_data.clear(); st.rerun()
+                    br_n = br_n.strip()
+                    br_s = br_s.strip()
+                    # 💡 核心更新：檢查是否為加碼動作
+                    active_idx = existing_df[(existing_df['盤後紀錄'] == "實單持倉中") & (existing_df['代號'] == br_s)].index
+                    
+                    if not active_idx.empty:
+                        # 執行加碼合併邏輯
+                        idx = active_idx[0]
+                        old_q = existing_df.at[idx, '股數']
+                        old_amt = existing_df.at[idx, '投入金額']
+                        
+                        new_q = old_q + int(br_q)
+                        new_amt = old_amt + (float(br_p) * int(br_q))
+                        new_p = new_amt / new_q  # 加權平均成本
+                        
+                        existing_df.at[idx, '股數'] = new_q
+                        existing_df.at[idx, '投入金額'] = new_amt
+                        existing_df.at[idx, '成本'] = new_p
+                        existing_df.at[idx, '日期'] = br_date.strftime("%m/%d") # 更新為最後加碼日
+                        
+                        conn.update(data=existing_df)
+                    else:
+                        # 執行全新買進邏輯
+                        new_r = pd.DataFrame([{"日期": br_date.strftime("%m/%d"), "標的": br_n, "代號": br_s, "操作": "買進", "成本": float(br_p), "股數": int(br_q), "投入金額": br_p*br_q, "漲跌%": 0.0, "盤後紀錄": "實單持倉中"}])
+                        conn.update(data=pd.concat([existing_df, new_r], ignore_index=True))
+                        
+                    st.cache_data.clear(); st.rerun()
         with tb_del:
             active_h_del = existing_df[existing_df['盤後紀錄'] == "實單持倉中"]
             if not active_h_del.empty:
                 with st.form("del_buy_f"):
                     st.info("⚠️ 僅用於刪除『輸入錯誤』的紀錄，若是正常獲利/停損了結，請使用下方『賣出結算』。")
-                    del_sel = st.selectbox("選取要刪除的持倉", active_h_del.apply(lambda x: f"{x.name} | {x['日期']} - {x['標的']} (均價:{x['成本']})", axis=1))
+                    del_sel = st.selectbox("選取要刪除的持倉", active_h_del.apply(lambda x: f"{x.name} | {x['日期']} - {x['標的']} (均價:{x['成本']:.2f})", axis=1))
                     if st.form_submit_button("🗑️ 確認刪除"):
                         idx_to_drop = int(del_sel.split(" | ")[0])
                         existing_df = existing_df.drop(idx_to_drop)
@@ -229,7 +254,6 @@ try:
         total_unrealized += p_twd
         active_holdings.append({'日期': row['日期'], '標的': row['標的'], '代號': row['代號'], '均價': row['成本'], '股數': row['股數'], '現價': cp if cp else "...", '損益金額': p_twd, '損益率%': p_pct})
         
-        # 💡 更新：將停利觸發標準改為 5.0%
         if p_pct >= 5.0: ready_to_sell.append({'name': row['標的'], 'symbol': row['代號'], 'pct': p_pct})
     
     total_profit = total_realized + total_unrealized
@@ -255,7 +279,6 @@ try:
         """
         st.markdown(f"""<div class="status-box" style="background-color:#ffebee; border:2px solid #ef5350; margin-bottom:20px;">{status_msg}</div>""", unsafe_allow_html=True)
     else:
-        # 💡 更新：前端提示文字同步改為 5%
         st.markdown("""<div class="status-box" style="background-color:#e8f5e9; color:#2e7d32; border:1px dashed #4caf50;">✅ 目前持股獲利尚未達 5% 停利標準，請繼續耐心持有。</div>""", unsafe_allow_html=True)
 
     t1, t2, t3, t4 = st.tabs(["💼 實單持股", "📰 即時新聞區", "📅 歷史日誌 (統整)", "🗂️ 個股深度追蹤"])
@@ -264,6 +287,7 @@ try:
         if active_holdings:
             st.dataframe(pd.DataFrame(active_holdings), use_container_width=True, hide_index=True, column_config={
                 "現價": st.column_config.NumberColumn(format="%.2f"),
+                "均價": st.column_config.NumberColumn(format="%.2f"),
                 "損益金額": st.column_config.NumberColumn(format="%.0f"),
                 "損益率%": st.column_config.NumberColumn(format="%.2f%%")
             })
