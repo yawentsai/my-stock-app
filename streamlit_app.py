@@ -70,6 +70,10 @@ def send_line_message(message):
     except:
         return False
 
+# 初始化瀏覽器暫存記憶，確保本金設定不會被自動刷新洗掉
+if 'capital' not in st.session_state:
+    st.session_state['capital'] = 150000
+
 st_autorefresh(interval=60000, limit=1000, key="global_v87_final")
 
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -103,9 +107,13 @@ for col in ['成本', '股數', '投入金額', '賣出價', '實現損益', '�
 with st.sidebar:
     st.header("⚡ 系統控制區")
     
-    # 💡 新增：資金控管區塊，預設值設定為 15 萬，妳可以隨時修改
+    # 💡 核心修正：將本金輸入框包裝進 st.form，並加入確認鍵與狀態記憶
     st.subheader("💰 資金控管")
-    INITIAL_CAPITAL = st.number_input("當前總本金 (可隨時增減)", min_value=0, value=150000, step=10000)
+    with st.form("capital_form"):
+        new_capital = st.number_input("當前總本金 (可隨時增減)", min_value=0, value=st.session_state['capital'], step=10000)
+        if st.form_submit_button("✅ 確認修改"):
+            st.session_state['capital'] = new_capital
+            st.rerun()
     st.divider()
 
     st.subheader("🔔 通知測試")
@@ -236,7 +244,9 @@ try:
         if p_pct >= 5.0: ready_to_sell.append({'name': row['標的'], 'symbol': row['代號'], 'pct': p_pct})
     
     total_profit = total_realized + total_unrealized
-    # 💡 資金計算全面套用側邊欄自訂的 INITIAL_CAPITAL
+    
+    # 💡 提取暫存記憶中的本金來進行全局運算
+    INITIAL_CAPITAL = st.session_state['capital']
     equity = INITIAL_CAPITAL + total_profit; used_cap = active_df['投入金額'].sum(); rem_cap = (INITIAL_CAPITAL + total_realized) - used_cap
 
     st.markdown("### 🏦 真實資產結算看板")
