@@ -70,7 +70,6 @@ def send_line_message(message):
     except:
         return False
 
-# 初始化瀏覽器暫存記憶，確保本金設定不會被自動刷新洗掉
 if 'capital' not in st.session_state:
     st.session_state['capital'] = 150000
 
@@ -101,13 +100,23 @@ existing_df['代號'] = existing_df['代號'].astype(str).str.replace(r'\.0$', '
 existing_df['標的'] = existing_df['標的'].astype(str).str.strip()
 existing_df['盤後紀錄'] = existing_df['盤後紀錄'].astype(str).str.strip()
 
+# 💡 核心修正：強制清洗日期格式，將已存入的 "05/07" 自動轉為 "5/7"，維持視覺強迫症的完美對齊
+def clean_date_format(d_str):
+    try:
+        if '/' in d_str:
+            parts = d_str.split('/')
+            return f"{int(parts[0])}/{int(parts[1])}"
+        return d_str
+    except:
+        return d_str
+existing_df['日期'] = existing_df['日期'].astype(str).apply(clean_date_format)
+
 for col in ['成本', '股數', '投入金額', '賣出價', '實現損益', '漲跌%']:
     existing_df[col] = pd.to_numeric(existing_df[col], errors='coerce').fillna(0.0)
 
 with st.sidebar:
     st.header("⚡ 系統控制區")
     
-    # 💡 核心修正：將本金輸入框包裝進 st.form，並加入確認鍵與狀態記憶
     st.subheader("💰 資金控管")
     with st.form("capital_form"):
         new_capital = st.number_input("當前總本金 (可隨時增減)", min_value=0, value=st.session_state['capital'], step=10000)
@@ -126,7 +135,8 @@ with st.sidebar:
 
     with st.expander("🌅 Step 1: 盤前計畫"):
         with st.form("pre_m", clear_on_submit=True):
-            p_date = st.text_input("日期", value=date.today().strftime("%m/%d"))
+            # 💡 修正：不再使用 strftime("%m/%d")，改為直接抓取真實月份與日期
+            p_date = st.text_input("日期", value=f"{date.today().month}/{date.today().day}")
             p_action = st.selectbox("性質", ["觀察", "✅ 買進"])
             p_name = st.text_input("股票名稱*")
             p_symbol = st.text_input("代號")
@@ -163,6 +173,8 @@ with st.sidebar:
                 if st.form_submit_button("✅ 加入持倉"):
                     br_n = br_n.strip()
                     br_s = br_s.strip()
+                    # 💡 修正：買入日期的寫入格式同步拔除 0
+                    clean_br_date = f"{br_date.month}/{br_date.day}"
                     
                     match_cond = (existing_df['盤後紀錄'] == "實單持倉中") & ((existing_df['標的'] == br_n) | ((existing_df['代號'] == br_s) & (br_s != "")))
                     active_idx = existing_df[match_cond].index
@@ -179,11 +191,11 @@ with st.sidebar:
                         existing_df.loc[idx, '股數'] = new_q
                         existing_df.loc[idx, '投入金額'] = new_amt
                         existing_df.loc[idx, '成本'] = new_p
-                        existing_df.loc[idx, '日期'] = br_date.strftime("%m/%d") 
+                        existing_df.loc[idx, '日期'] = clean_br_date 
                         
                         conn.update(data=existing_df)
                     else:
-                        new_r = pd.DataFrame([{"日期": br_date.strftime("%m/%d"), "標的": br_n, "代號": br_s, "操作": "買進", "成本": float(br_p), "股數": int(br_q), "投入金額": br_p*br_q, "漲跌%": 0.0, "盤後紀錄": "實單持倉中"}])
+                        new_r = pd.DataFrame([{"日期": clean_br_date, "標的": br_n, "代號": br_s, "操作": "買進", "成本": float(br_p), "股數": int(br_q), "投入金額": br_p*br_q, "漲跌%": 0.0, "盤後紀錄": "實單持倉中"}])
                         conn.update(data=pd.concat([existing_df, new_r], ignore_index=True))
                         
                     st.cache_data.clear(); st.rerun()
@@ -245,7 +257,6 @@ try:
     
     total_profit = total_realized + total_unrealized
     
-    # 💡 提取暫存記憶中的本金來進行全局運算
     INITIAL_CAPITAL = st.session_state['capital']
     equity = INITIAL_CAPITAL + total_profit; used_cap = active_df['投入金額'].sum(); rem_cap = (INITIAL_CAPITAL + total_realized) - used_cap
 
