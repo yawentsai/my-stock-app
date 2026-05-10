@@ -70,6 +70,7 @@ def send_line_message(message):
     except:
         return False
 
+# 初始化瀏覽器暫存記憶
 if 'capital' not in st.session_state:
     st.session_state['capital'] = 150000
 
@@ -100,7 +101,6 @@ existing_df['代號'] = existing_df['代號'].astype(str).str.replace(r'\.0$', '
 existing_df['標的'] = existing_df['標的'].astype(str).str.strip()
 existing_df['盤後紀錄'] = existing_df['盤後紀錄'].astype(str).str.strip()
 
-# 💡 核心修正：強制清洗日期格式，將已存入的 "05/07" 自動轉為 "5/7"，維持視覺強迫症的完美對齊
 def clean_date_format(d_str):
     try:
         if '/' in d_str:
@@ -135,7 +135,6 @@ with st.sidebar:
 
     with st.expander("🌅 Step 1: 盤前計畫"):
         with st.form("pre_m", clear_on_submit=True):
-            # 💡 修正：不再使用 strftime("%m/%d")，改為直接抓取真實月份與日期
             p_date = st.text_input("日期", value=f"{date.today().month}/{date.today().day}")
             p_action = st.selectbox("性質", ["觀察", "✅ 買進"])
             p_name = st.text_input("股票名稱*")
@@ -173,7 +172,6 @@ with st.sidebar:
                 if st.form_submit_button("✅ 加入持倉"):
                     br_n = br_n.strip()
                     br_s = br_s.strip()
-                    # 💡 修正：買入日期的寫入格式同步拔除 0
                     clean_br_date = f"{br_date.month}/{br_date.day}"
                     
                     match_cond = (existing_df['盤後紀錄'] == "實單持倉中") & ((existing_df['標的'] == br_n) | ((existing_df['代號'] == br_s) & (br_s != "")))
@@ -256,7 +254,6 @@ try:
         if p_pct >= 5.0: ready_to_sell.append({'name': row['標的'], 'symbol': row['代號'], 'pct': p_pct})
     
     total_profit = total_realized + total_unrealized
-    
     INITIAL_CAPITAL = st.session_state['capital']
     equity = INITIAL_CAPITAL + total_profit; used_cap = active_df['投入金額'].sum(); rem_cap = (INITIAL_CAPITAL + total_realized) - used_cap
 
@@ -298,7 +295,12 @@ try:
     
     with t2:
         if not completed.empty:
-            for d in sorted(completed['日期'].unique(), reverse=True):
+            # 💡 修正：植入時間解析排序引擎
+            def parse_date_for_sort(d_str):
+                try: return datetime.strptime(d_str, "%m/%d")
+                except: return datetime.min
+            
+            for d in sorted(completed['日期'].unique(), key=parse_date_for_sort, reverse=True):
                 with st.expander(f"🗓️ {d} 操盤戰報", expanded=(d == completed['日期'].max())):
                     for _, r in completed[completed['日期'] == d].iterrows():
                         res_c = "#ef5350" if r['漲跌%'] > 0 else ("#26a69a" if r['漲跌%'] < 0 else "gray")
@@ -326,7 +328,11 @@ try:
     with t3:
         if not completed.empty:
             for t in sorted(completed['標的'].unique()):
-                t_df = completed[completed['標的'] == t].sort_values(by='日期', ascending=False)
+                t_df = completed[completed['標的'] == t].copy()
+                # 💡 修正：個股追蹤區同步套用 datetime 時間排序
+                t_df['sort_date'] = pd.to_datetime(t_df['日期'].astype(str) + f'/{date.today().year}', format='%m/%d/%Y', errors='coerce')
+                t_df = t_df.sort_values(by='sort_date', ascending=False).drop(columns=['sort_date'])
+                
                 with st.expander(f"📌 {t} (紀錄：{len(t_df)} 筆)"):
                     for _, row in t_df.iterrows():
                         c = "#ef5350" if row['漲跌%'] > 0 else ("#26a69a" if row['漲跌%'] < 0 else "#bdbdbd")
