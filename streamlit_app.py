@@ -153,6 +153,35 @@ with st.sidebar:
                 new_r = pd.DataFrame([{"日期": p_date, "標的": p_name.strip(), "代號": p_symbol.strip(), "操作": "買進" if "買進" in p_action else "觀察", "成本": 0.0, "股數": 0, "投入金額": 0.0, "漲跌%": 0.0, "盤前觀察": p_pre, "盤後紀錄": "⏳ 等待更新...", "賣出價": 0.0, "實現損益": 0.0}])
                 conn.update(data=pd.concat([existing_df, new_r], ignore_index=True)); st.cache_data.clear(); st.rerun()
 
+    # --- 新增功能：修正已發布的內容 ---
+    with st.expander("✏️ 修正：內容微調 (盤前)"):
+        if not existing_df.empty:
+            edit_df = existing_df[existing_df['操作'] != '系統設定'].copy()
+            if not edit_df.empty:
+                edit_target = st.selectbox(
+                    "選取要修正的紀錄", 
+                    edit_df.index[::-1], 
+                    format_func=lambda x: f"{existing_df.at[x, '日期']} - {existing_df.at[x, '標的']}"
+                )
+                curr_name = existing_df.at[edit_target, '標的']
+                curr_symbol = existing_df.at[edit_target, '代號']
+                curr_pre = existing_df.at[edit_target, '盤前觀察']
+                
+                with st.form("edit_fix_form"):
+                    new_name = st.text_input("修正標的名稱", value=curr_name)
+                    new_symbol = st.text_input("修正代號", value=curr_symbol)
+                    new_pre = st.text_area("修正盤前觀點", value=curr_pre, height=150)
+                    
+                    if st.form_submit_button("🔨 執行覆蓋修正"):
+                        existing_df.at[edit_target, '標的'] = new_name.strip()
+                        existing_df.at[edit_target, '代號'] = new_symbol.strip()
+                        existing_df.at[edit_target, '盤前觀察'] = new_pre
+                        conn.update(data=existing_df)
+                        st.cache_data.clear()
+                        st.rerun()
+            else:
+                st.write("目前尚無紀錄可修正。")
+
     with st.expander("🌇 Step 2: 盤後統整"):
         waiting = existing_df[existing_df['盤後紀錄'] == "⏳ 等待更新..."]
         if not waiting.empty:
