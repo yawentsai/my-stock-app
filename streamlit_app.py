@@ -157,33 +157,52 @@ with st.sidebar:
                 new_r = pd.DataFrame([{"日期": p_date, "標的": p_name.strip(), "代號": p_symbol.strip(), "操作": "買進" if "買進" in p_action else "觀察", "成本": 0.0, "股數": 0, "投入金額": 0.0, "漲跌%": 0.0, "盤前觀察": p_pre, "盤後紀錄": "⏳ 等待更新...", "賣出價": 0.0, "實現損益": 0.0}])
                 conn.update(data=pd.concat([existing_df, new_r], ignore_index=True)); st.cache_data.clear(); st.rerun()
 
-    with st.expander("✏️ 修正：內容微調 (盤前)"):
+    # 💡 核心升級：加入日期修改與單筆刪除功能
+    with st.expander("✏️ 修正 / 刪除：戰報紀錄"):
         if not existing_df.empty:
-            edit_df = existing_df[existing_df['操作'] != '系統設定'].copy()
+            # 排除系統設定與持有中的實單，只抓戰報紀錄
+            edit_df = existing_df[(existing_df['操作'] != '系統設定') & (existing_df['盤後紀錄'] != '實單持倉中')].copy()
             if not edit_df.empty:
                 edit_target = st.selectbox(
-                    "選取要修正的紀錄", 
+                    "選取要處理的紀錄", 
                     edit_df.index[::-1], 
-                    format_func=lambda x: f"{existing_df.at[x, '日期']} - {existing_df.at[x, '標的']}"
+                    format_func=lambda x: f"{existing_df.at[x, '日期']} - {existing_df.at[x, '標的']} ({existing_df.at[x, '操作']})"
                 )
+                curr_date = existing_df.at[edit_target, '日期']
                 curr_name = existing_df.at[edit_target, '標的']
                 curr_symbol = existing_df.at[edit_target, '代號']
                 curr_pre = existing_df.at[edit_target, '盤前觀察']
+                curr_post = existing_df.at[edit_target, '盤後紀錄']
                 
                 with st.form("edit_fix_form"):
+                    new_date = st.text_input("修正日期", value=curr_date)
                     new_name = st.text_input("修正標的名稱", value=curr_name)
                     new_symbol = st.text_input("修正代號", value=curr_symbol)
-                    new_pre = st.text_area("修正盤前觀點", value=curr_pre, height=150)
+                    new_pre = st.text_area("修正盤前觀點", value=curr_pre, height=100)
+                    new_post = st.text_area("修正盤後紀錄", value=curr_post, height=100)
                     
-                    if st.form_submit_button("🔨 執行覆蓋修正"):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        btn_update = st.form_submit_button("🔨 執行修改")
+                    with col2:
+                        btn_delete = st.form_submit_button("🗑️ 刪除此紀錄")
+                    
+                    if btn_update:
+                        existing_df.at[edit_target, '日期'] = new_date.strip()
                         existing_df.at[edit_target, '標的'] = new_name.strip()
                         existing_df.at[edit_target, '代號'] = new_symbol.strip()
                         existing_df.at[edit_target, '盤前觀察'] = new_pre
+                        existing_df.at[edit_target, '盤後紀錄'] = new_post
+                        conn.update(data=existing_df)
+                        st.cache_data.clear()
+                        st.rerun()
+                    elif btn_delete:
+                        existing_df = existing_df.drop(edit_target)
                         conn.update(data=existing_df)
                         st.cache_data.clear()
                         st.rerun()
             else:
-                st.write("目前尚無紀錄可修正。")
+                st.write("目前尚無紀錄可修改。")
 
     with st.expander("🌇 Step 2: 盤後統整"):
         waiting = existing_df[existing_df['盤後紀錄'] == "⏳ 等待更新..."]
@@ -260,7 +279,6 @@ with st.sidebar:
                 curr_row = existing_df[(existing_df['日期']==sd_sel) & (existing_df['標的']==sn_sel)].iloc[0]
                 
                 curr_q = int(curr_row['股數'])
-                # 💡 終極解法：強制讓 UI 的最大值為 1 (即使庫存是 0)，避開介面崩潰
                 safe_max_q = max(1, curr_q)
                 
                 sr_p = st.number_input("賣出單價", min_value=0.0)
@@ -270,7 +288,6 @@ with st.sidebar:
                 submitted = st.form_submit_button("💰 結算獲利")
                 
                 if submitted:
-                    # 💡 後端攔截：按鈕按下去才檢查，如果是 0 股就擋下來不執行，並發出警告
                     if curr_q <= 0:
                         st.error(f"🚨 結算失敗！「{sn_sel}」的實際庫存為 0。請改用上方的『🗑️ 刪除誤植』將其清除。")
                     else:
@@ -439,7 +456,7 @@ try:
     w_r = (len(c_buy[c_buy['漲跌%'] > 0]) / len(c_buy) * 100) if not c_buy.empty else 0.0
     st.markdown(f"<div><span style='font-size:1.1rem; color:#555;'>📊 實際預判勝率</span><br><span style='font-size:2.5rem; font-weight:bold; color:#2196f3;'>{w_r:.1f}%</span></div>", unsafe_allow_html=True)
     if not df.empty:
-        fig = px.pie(df, names='操作', hole=0.4, color='操作', color_discrete_map={'買進':'#2196f3', '观察':'#bdbdbd', '追蹤':'#ffeb3b'})
+        fig = px.pie(df, names='操作', hole=0.4, color='操作', color_discrete_map={'買進':'#2196f3', '觀察':'#bdbdbd', '追蹤':'#ffeb3b'})
         fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=300); st.plotly_chart(fig, use_container_width=True)
 
 except Exception as e: st.info(f"系統準備中... ({e})")
