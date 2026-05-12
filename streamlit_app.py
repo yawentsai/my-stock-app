@@ -70,6 +70,10 @@ def send_line_message(message):
     except:
         return False
 
+# 初始化瀏覽器暫存記憶
+if 'capital' not in st.session_state:
+    st.session_state['capital'] = 150000
+
 st_autorefresh(interval=60000, limit=1000, key="global_v87_final")
 
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -110,7 +114,7 @@ existing_df['日期'] = existing_df['日期'].astype(str).apply(clean_date_forma
 for col in ['成本', '股數', '投入金額', '賣出價', '實現損益', '漲跌%']:
     existing_df[col] = pd.to_numeric(existing_df[col], errors='coerce').fillna(0.0)
 
-# 💡 核心升級：從資料庫最底層抓取「系統設定」的本金，確保永久不消失
+# 💡 核心機制：從資料庫讀取本金設定，確保永久定錨
 settings_idx = existing_df[existing_df['操作'] == '系統設定'].index
 if not settings_idx.empty:
     INITIAL_CAPITAL = float(existing_df.loc[settings_idx[-1], '投入金額'])
@@ -122,10 +126,8 @@ with st.sidebar:
     
     st.subheader("💰 資金控管")
     with st.form("capital_form"):
-        # 顯示當前從資料庫讀出來的本金
         new_capital = st.number_input("當前總本金 (可隨時增減)", min_value=0.0, value=INITIAL_CAPITAL, step=10000.0)
         if st.form_submit_button("✅ 確認修改"):
-            # 將新本金作為隱形列寫入 Google 表單
             if not settings_idx.empty:
                 existing_df.loc[settings_idx[-1], '投入金額'] = new_capital
             else:
@@ -154,6 +156,34 @@ with st.sidebar:
             if st.form_submit_button("🚀 發布"):
                 new_r = pd.DataFrame([{"日期": p_date, "標的": p_name.strip(), "代號": p_symbol.strip(), "操作": "買進" if "買進" in p_action else "觀察", "成本": 0.0, "股數": 0, "投入金額": 0.0, "漲跌%": 0.0, "盤前觀察": p_pre, "盤後紀錄": "⏳ 等待更新...", "賣出價": 0.0, "實現損益": 0.0}])
                 conn.update(data=pd.concat([existing_df, new_r], ignore_index=True)); st.cache_data.clear(); st.rerun()
+
+    with st.expander("✏️ 修正：內容微調 (盤前)"):
+        if not existing_df.empty:
+            edit_df = existing_df[existing_df['操作'] != '系統設定'].copy()
+            if not edit_df.empty:
+                edit_target = st.selectbox(
+                    "選取要修正的紀錄", 
+                    edit_df.index[::-1], 
+                    format_func=lambda x: f"{existing_df.at[x, '日期']} - {existing_df.at[x, '標的']}"
+                )
+                curr_name = existing_df.at[edit_target, '標的']
+                curr_symbol = existing_df.at[edit_target, '代號']
+                curr_pre = existing_df.at[edit_target, '盤前觀察']
+                
+                with st.form("edit_fix_form"):
+                    new_name = st.text_input("修正標的名稱", value=curr_name)
+                    new_symbol = st.text_input("修正代號", value=curr_symbol)
+                    new_pre = st.text_area("修正盤前觀點", value=curr_pre, height=150)
+                    
+                    if st.form_submit_button("🔨 執行覆蓋修正"):
+                        existing_df.at[edit_target, '標的'] = new_name.strip()
+                        existing_df.at[edit_target, '代號'] = new_symbol.strip()
+                        existing_df.at[edit_target, '盤前觀察'] = new_pre
+                        conn.update(data=existing_df)
+                        st.cache_data.clear()
+                        st.rerun()
+            else:
+                st.write("目前尚無紀錄可修正。")
 
     with st.expander("🌇 Step 2: 盤後統整"):
         waiting = existing_df[existing_df['盤後紀錄'] == "⏳ 等待更新..."]
@@ -226,29 +256,34 @@ with st.sidebar:
         if not active_h.empty:
             with st.form("sell_f"):
                 sel = st.selectbox("選取結算對象", active_h.apply(lambda x: f"{x['日期']} - {x['標的']}", axis=1))
-                sr_p = st.number_input("賣出單價", min_value=0.0)
                 sd_sel, sn_sel = sel.split(" - ", 1)
                 curr_row = existing_df[(existing_df['日期']==sd_sel) & (existing_df['標的']==sn_sel)].iloc[0]
-                sr_q = st.number_input(f"賣出股數 (持有: {int(curr_row['股數'])})", min_value=1, max_value=int(curr_row['股數']), value=int(curr_row['股數']))
-                sr_n = st.text_input("出場筆記")
-                if st.form_submit_button("💰 結算獲利"):
-                    idx = existing_df[(existing_df['日期']==sd_sel) & (existing_df['標的']==sn_sel)].index[0]
-                    cp, q_orig = existing_df.at[idx, '成本'], existing_df.at[idx, '股數']
-                    if sr_q < q_orig:
-                        new_sold = existing_df.loc[[idx]].copy()
-                        new_sold['股數'], new_sold['投入金額'], new_sold['賣出價'] = sr_q, cp * sr_q, sr_p
-                        new_sold['實現損益'], new_sold['漲跌%'], new_sold['盤後紀錄'] = (sr_p - cp) * sr_q, ((sr_p - cp)/cp)*100, f"減碼：{sr_n}"
-                        existing_df.at[idx, '股數'] = q_orig - sr_q
-                        existing_df.at[idx, '投入金額'] = cp * (q_orig - sr_q)
-                        existing_df = pd.concat([existing_df, new_sold], ignore_index=True)
-                    else:
-                        existing_df.at[idx, '賣出價'], existing_df.at[idx, '實現損益'] = sr_p, (sr_p - cp) * q_orig
-                        existing_df.at[idx, '漲跌%'], existing_df.at[idx, '盤後紀錄'] = ((sr_p - cp)/cp)*100, f"清倉：{sr_n}"
-                    conn.update(data=existing_df); st.cache_data.clear(); st.rerun()
+                
+                # 💡 終極防護：若股數異常為 0 或負數，直接隱藏輸入框並警告
+                curr_q = int(curr_row['股數'])
+                if curr_q <= 0:
+                    st.error(f"🚨 系統偵測到「{sn_sel}」的庫存為 {curr_q} 股，資料異常。請勿在此結算，請改用上方的『🗑️ 刪除誤植』功能將其清除。")
+                else:
+                    sr_p = st.number_input("賣出單價", min_value=0.0)
+                    sr_q = st.number_input(f"賣出股數 (持有: {curr_q})", min_value=1, max_value=curr_q, value=curr_q)
+                    sr_n = st.text_input("出場筆記")
+                    if st.form_submit_button("💰 結算獲利"):
+                        idx = existing_df[(existing_df['日期']==sd_sel) & (existing_df['標的']==sn_sel)].index[0]
+                        cp, q_orig = existing_df.at[idx, '成本'], existing_df.at[idx, '股數']
+                        if sr_q < q_orig:
+                            new_sold = existing_df.loc[[idx]].copy()
+                            new_sold['股數'], new_sold['投入金額'], new_sold['賣出價'] = sr_q, cp * sr_q, sr_p
+                            new_sold['實現損益'], new_sold['漲跌%'], new_sold['盤後紀錄'] = (sr_p - cp) * sr_q, ((sr_p - cp)/cp)*100, f"減碼：{sr_n}"
+                            existing_df.at[idx, '股數'] = q_orig - sr_q
+                            existing_df.at[idx, '投入金額'] = cp * (q_orig - sr_q)
+                            existing_df = pd.concat([existing_df, new_sold], ignore_index=True)
+                        else:
+                            existing_df.at[idx, '賣出價'], existing_df.at[idx, '實現損益'] = sr_p, (sr_p - cp) * q_orig
+                            existing_df.at[idx, '漲跌%'], existing_df.at[idx, '盤後紀錄'] = ((sr_p - cp)/cp)*100, f"清倉：{sr_n}"
+                        conn.update(data=existing_df); st.cache_data.clear(); st.rerun()
 
 # --- 主畫面顯示 ---
 try:
-    # 💡 確保看板運算時排除「系統設定」那行隱藏資料
     df = existing_df[existing_df['操作'] != '系統設定'].dropna(subset=['標的']).copy()
     df['標的'] = df['標的'].astype(str).str.replace(r'\d+', '', regex=True).str.strip()
     
@@ -267,11 +302,9 @@ try:
     
     total_profit = total_realized + total_unrealized
     equity = INITIAL_CAPITAL + total_profit
-    # 避免本金為 0 發生計算錯誤
     roi_pct = (total_profit / INITIAL_CAPITAL) * 100 if INITIAL_CAPITAL > 0 else 0.0
     target_count = len(ready_to_sell)
 
-    # 💡 核心升級：看板重構 (投入總本金、已實現、未實現、總獲利%、達標數量、總權益)
     realized_c = "#2e7d32" if total_realized >= 0 else "#c62828"
     unrealized_c = "#2e7d32" if total_unrealized >= 0 else "#c62828"
     profit_c = "#1b5e20" if total_profit >= 0 else "#b71c1c"
@@ -297,7 +330,7 @@ try:
             <div class="metric-value" style="color:{profit_c};">{roi_pct:.2f}%</div>
         </div>
         <div class="metric-card" style="background:#fff3e0;">
-            <div class="metric-label" style="color:#e65100;">達停利標準</div>
+            <div class="metric-label" style="color:#e65100;">達 5% 停利檔數</div>
             <div class="metric-value" style="color:#e65100;">{target_count} 檔</div>
         </div>
         <div class="metric-card">
