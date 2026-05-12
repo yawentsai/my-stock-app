@@ -260,16 +260,20 @@ with st.sidebar:
                 curr_row = existing_df[(existing_df['日期']==sd_sel) & (existing_df['標的']==sn_sel)].iloc[0]
                 
                 curr_q = int(curr_row['股數'])
+                # 💡 終極解法：強制讓 UI 的最大值為 1 (即使庫存是 0)，避開介面崩潰
+                safe_max_q = max(1, curr_q)
                 
-                # 💡 終極防護：若股數異常為 0 或負數，跳出警告，並補上假按鈕塞住系統的嘴
-                if curr_q <= 0:
-                    st.error(f"🚨 系統偵測到「{sn_sel}」的庫存為 {curr_q} 股，資料異常。請勿在此結算，請改用上方的『🗑️ 刪除誤植』功能將其清除。")
-                    st.form_submit_button("無法結算 (請去刪除誤植)", disabled=True)
-                else:
-                    sr_p = st.number_input("賣出單價", min_value=0.0)
-                    sr_q = st.number_input(f"賣出股數 (持有: {curr_q})", min_value=1, max_value=curr_q, value=curr_q)
-                    sr_n = st.text_input("出場筆記")
-                    if st.form_submit_button("💰 結算獲利"):
+                sr_p = st.number_input("賣出單價", min_value=0.0)
+                sr_q = st.number_input(f"賣出股數 (真實持有: {curr_q})", min_value=1, max_value=safe_max_q, value=safe_max_q)
+                sr_n = st.text_input("出場筆記")
+                
+                submitted = st.form_submit_button("💰 結算獲利")
+                
+                if submitted:
+                    # 💡 後端攔截：按鈕按下去才檢查，如果是 0 股就擋下來不執行，並發出警告
+                    if curr_q <= 0:
+                        st.error(f"🚨 結算失敗！「{sn_sel}」的實際庫存為 0。請改用上方的『🗑️ 刪除誤植』將其清除。")
+                    else:
                         idx = existing_df[(existing_df['日期']==sd_sel) & (existing_df['標的']==sn_sel)].index[0]
                         cp, q_orig = existing_df.at[idx, '成本'], existing_df.at[idx, '股數']
                         if sr_q < q_orig:
@@ -435,7 +439,7 @@ try:
     w_r = (len(c_buy[c_buy['漲跌%'] > 0]) / len(c_buy) * 100) if not c_buy.empty else 0.0
     st.markdown(f"<div><span style='font-size:1.1rem; color:#555;'>📊 實際預判勝率</span><br><span style='font-size:2.5rem; font-weight:bold; color:#2196f3;'>{w_r:.1f}%</span></div>", unsafe_allow_html=True)
     if not df.empty:
-        fig = px.pie(df, names='操作', hole=0.4, color='操作', color_discrete_map={'買進':'#2196f3', '觀察':'#bdbdbd', '追蹤':'#ffeb3b'})
+        fig = px.pie(df, names='操作', hole=0.4, color='操作', color_discrete_map={'買進':'#2196f3', '观察':'#bdbdbd', '追蹤':'#ffeb3b'})
         fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=300); st.plotly_chart(fig, use_container_width=True)
 
 except Exception as e: st.info(f"系統準備中... ({e})")
