@@ -259,10 +259,12 @@ with st.sidebar:
                 sd_sel, sn_sel = sel.split(" - ", 1)
                 curr_row = existing_df[(existing_df['日期']==sd_sel) & (existing_df['標的']==sn_sel)].iloc[0]
                 
-                # 💡 終極防護：若股數異常為 0 或負數，直接隱藏輸入框並警告
                 curr_q = int(curr_row['股數'])
+                
+                # 💡 終極防護：若股數異常為 0 或負數，跳出警告，並補上假按鈕塞住系統的嘴
                 if curr_q <= 0:
                     st.error(f"🚨 系統偵測到「{sn_sel}」的庫存為 {curr_q} 股，資料異常。請勿在此結算，請改用上方的『🗑️ 刪除誤植』功能將其清除。")
+                    st.form_submit_button("無法結算 (請去刪除誤植)", disabled=True)
                 else:
                     sr_p = st.number_input("賣出單價", min_value=0.0)
                     sr_q = st.number_input(f"賣出股數 (持有: {curr_q})", min_value=1, max_value=curr_q, value=curr_q)
