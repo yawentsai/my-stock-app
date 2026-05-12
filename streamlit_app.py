@@ -70,6 +70,10 @@ def send_line_message(message):
     except:
         return False
 
+# 初始化瀏覽器暫存記憶
+if 'capital' not in st.session_state:
+    st.session_state['capital'] = 150000
+
 st_autorefresh(interval=60000, limit=1000, key="global_v87_final")
 
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -110,27 +114,14 @@ existing_df['日期'] = existing_df['日期'].astype(str).apply(clean_date_forma
 for col in ['成本', '股數', '投入金額', '賣出價', '實現損益', '漲跌%']:
     existing_df[col] = pd.to_numeric(existing_df[col], errors='coerce').fillna(0.0)
 
-# 💡 核心機制：從資料庫讀取本金設定，確保永久定錨
-settings_idx = existing_df[existing_df['操作'] == '系統設定'].index
-if not settings_idx.empty:
-    INITIAL_CAPITAL = float(existing_df.loc[settings_idx[-1], '投入金額'])
-else:
-    INITIAL_CAPITAL = 150000.0
-
 with st.sidebar:
     st.header("⚡ 系統控制區")
     
     st.subheader("💰 資金控管")
     with st.form("capital_form"):
-        new_capital = st.number_input("當前總本金 (可隨時增減)", min_value=0.0, value=INITIAL_CAPITAL, step=10000.0)
+        new_capital = st.number_input("當前總本金 (可隨時增減)", min_value=0, value=st.session_state['capital'], step=10000)
         if st.form_submit_button("✅ 確認修改"):
-            if not settings_idx.empty:
-                existing_df.loc[settings_idx[-1], '投入金額'] = new_capital
-            else:
-                new_setting = pd.DataFrame([{"日期": f"{date.today().month}/{date.today().day}", "標的": "系統設定", "代號": "", "操作": "系統設定", "成本": 0.0, "股數": 0, "投入金額": new_capital, "漲跌%": 0.0, "盤前觀察": "", "盤後紀錄": "", "賣出價": 0.0, "實現損益": 0.0}])
-                existing_df = pd.concat([existing_df, new_setting], ignore_index=True)
-            conn.update(data=existing_df)
-            st.cache_data.clear()
+            st.session_state['capital'] = new_capital
             st.rerun()
     st.divider()
 
@@ -152,35 +143,6 @@ with st.sidebar:
             if st.form_submit_button("🚀 發布"):
                 new_r = pd.DataFrame([{"日期": p_date, "標的": p_name.strip(), "代號": p_symbol.strip(), "操作": "買進" if "買進" in p_action else "觀察", "成本": 0.0, "股數": 0, "投入金額": 0.0, "漲跌%": 0.0, "盤前觀察": p_pre, "盤後紀錄": "⏳ 等待更新...", "賣出價": 0.0, "實現損益": 0.0}])
                 conn.update(data=pd.concat([existing_df, new_r], ignore_index=True)); st.cache_data.clear(); st.rerun()
-
-    # --- 新增功能：修正已發布的內容 ---
-    with st.expander("✏️ 修正：內容微調 (盤前)"):
-        if not existing_df.empty:
-            edit_df = existing_df[existing_df['操作'] != '系統設定'].copy()
-            if not edit_df.empty:
-                edit_target = st.selectbox(
-                    "選取要修正的紀錄", 
-                    edit_df.index[::-1], 
-                    format_func=lambda x: f"{existing_df.at[x, '日期']} - {existing_df.at[x, '標的']}"
-                )
-                curr_name = existing_df.at[edit_target, '標的']
-                curr_symbol = existing_df.at[edit_target, '代號']
-                curr_pre = existing_df.at[edit_target, '盤前觀察']
-                
-                with st.form("edit_fix_form"):
-                    new_name = st.text_input("修正標的名稱", value=curr_name)
-                    new_symbol = st.text_input("修正代號", value=curr_symbol)
-                    new_pre = st.text_area("修正盤前觀點", value=curr_pre, height=150)
-                    
-                    if st.form_submit_button("🔨 執行覆蓋修正"):
-                        existing_df.at[edit_target, '標的'] = new_name.strip()
-                        existing_df.at[edit_target, '代號'] = new_symbol.strip()
-                        existing_df.at[edit_target, '盤前觀察'] = new_pre
-                        conn.update(data=existing_df)
-                        st.cache_data.clear()
-                        st.rerun()
-            else:
-                st.write("目前尚無紀錄可修正。")
 
     with st.expander("🌇 Step 2: 盤後統整"):
         waiting = existing_df[existing_df['盤後紀錄'] == "⏳ 等待更新..."]
@@ -275,7 +237,7 @@ with st.sidebar:
 
 # --- 主畫面顯示 ---
 try:
-    df = existing_df[existing_df['操作'] != '系統設定'].dropna(subset=['標的']).copy()
+    df = existing_df.dropna(subset=['標的']).copy()
     df['標的'] = df['標的'].astype(str).str.replace(r'\d+', '', regex=True).str.strip()
     
     total_realized = df['實現損益'].sum()
@@ -292,53 +254,21 @@ try:
         if p_pct >= 5.0: ready_to_sell.append({'name': row['標的'], 'symbol': row['代號'], 'pct': p_pct})
     
     total_profit = total_realized + total_unrealized
-    equity = INITIAL_CAPITAL + total_profit
-    roi_pct = (total_profit / INITIAL_CAPITAL) * 100 if INITIAL_CAPITAL > 0 else 0.0
-    target_count = len(ready_to_sell)
+    INITIAL_CAPITAL = st.session_state['capital']
+    equity = INITIAL_CAPITAL + total_profit; used_cap = active_df['投入金額'].sum(); rem_cap = (INITIAL_CAPITAL + total_realized) - used_cap
 
-    realized_c = "#2e7d32" if total_realized >= 0 else "#c62828"
-    unrealized_c = "#2e7d32" if total_unrealized >= 0 else "#c62828"
-    profit_c = "#1b5e20" if total_profit >= 0 else "#b71c1c"
-    profit_bg = "#e8f5e9" if total_profit >= 0 else "#ffebee"
-
-    # 💡 核心升級：看板大換血，精準呈現五大數據
     st.markdown("### 🏦 真實資產結算看板")
-    st.markdown(f"""
-    <div class="dashboard-grid">
-        <div class="metric-card">
-            <div class="metric-label">投入總本金</div>
-            <div class="metric-value">${INITIAL_CAPITAL:,.0f}</div>
-        </div>
-        <div class="metric-card">
-            <div class="metric-label">已實現獲利</div>
-            <div class="metric-value" style="color:{realized_c};">${total_realized:,.0f}</div>
-        </div>
-        <div class="metric-card">
-            <div class="metric-label">未實現獲利</div>
-            <div class="metric-value" style="color:{unrealized_c};">${total_unrealized:,.0f}</div>
-        </div>
-        <div class="metric-card" style="background:{profit_bg}; border-color:{profit_c}22;">
-            <div class="metric-label" style="color:{profit_c};">🎯 總獲利 %</div>
-            <div class="metric-value" style="color:{profit_c};">{roi_pct:.2f}%</div>
-        </div>
-        <div class="metric-card" style="background:#fff3e0;">
-            <div class="metric-label" style="color:#e65100;">達 5% 停利檔數</div>
-            <div class="metric-value" style="color:#e65100;">{target_count} 檔</div>
-        </div>
-        <div class="metric-card">
-            <div class="metric-label">總資產權益</div>
-            <div class="metric-value">${equity:,.0f}</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    p_c = "#1b5e20" if total_profit >= 0 else "#b71c1c"; p_b = "#e8f5e9" if total_profit >= 0 else "#ffebee"
+    st.markdown(f"""<div class="dashboard-grid"><div class="metric-card"><div class="metric-label">總資產權益</div><div class="metric-value">${equity:,.0f}</div></div><div class="metric-card" style="background:{p_b}; border-color:{p_c}22;"><div class="metric-label" style="color:{p_c};">🎯 累計獲利</div><div class="metric-value" style="color:{p_c};">${total_profit:,.0f}</div></div><div class="metric-card"><div class="metric-label">📈 ROI</div><div class="metric-value">{(total_profit/INITIAL_CAPITAL)*100:.2f}%</div></div><div class="metric-card" style="background:#fff3e0;"><div class="metric-label" style="color:#e65100;">已投入資金</div><div class="metric-value" style="color:#e65100;">${used_cap:,.0f}</div></div><div class="metric-card"><div class="metric-label">可用現金</div><div class="metric-value">${rem_cap:,.0f}</div></div><div class="metric-card"><div class="metric-label">利用率</div><div class="metric-value">{(used_cap/(INITIAL_CAPITAL+total_realized))*100:.1f}%</div></div></div>""", unsafe_allow_html=True)
 
     if ready_to_sell:
+        count = len(ready_to_sell)
         items_html = "".join([f"<div style='display: flex; justify-content: space-between; border-bottom: 1px dashed #ffcdd2; padding: 6px 0;'><span style='font-weight:bold; color:#b71c1c;'>{item['name']} ({item['symbol']})</span><span style='font-weight:bold; color:#c62828;'>+{item['pct']:.2f}%</span></div>" for item in ready_to_sell])
         
         status_msg = f"""
         <div style="text-align: left; padding: 4px;">
             <div style="font-weight: bold; margin-bottom: 8px; font-size: 1.05rem; border-bottom: 2px solid #ef5350; padding-bottom: 6px; color: #b71c1c;">
-                🚨 停利標準已達標 (共 {target_count} 檔等待結算)：
+                🚨 停利標準已達標 (共 {count} 檔等待結算)：
             </div>
             <div style="padding: 0 5px;">
                 {items_html}
@@ -365,6 +295,7 @@ try:
     
     with t2:
         if not completed.empty:
+            # 💡 修正：植入時間解析排序引擎
             def parse_date_for_sort(d_str):
                 try: return datetime.strptime(d_str, "%m/%d")
                 except: return datetime.min
@@ -398,6 +329,7 @@ try:
         if not completed.empty:
             for t in sorted(completed['標的'].unique()):
                 t_df = completed[completed['標的'] == t].copy()
+                # 💡 修正：個股追蹤區同步套用 datetime 時間排序
                 t_df['sort_date'] = pd.to_datetime(t_df['日期'].astype(str) + f'/{date.today().year}', format='%m/%d/%Y', errors='coerce')
                 t_df = t_df.sort_values(by='sort_date', ascending=False).drop(columns=['sort_date'])
                 
