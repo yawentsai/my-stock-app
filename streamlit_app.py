@@ -95,12 +95,16 @@ try:
     existing_df = conn.read(ttl=0)
     existing_df = existing_df.reset_index(drop=True) 
 except:
-    existing_df = pd.DataFrame(columns=['日期', '標的', '代號', '操作', '成本', '股數', '投入金額', '漲跌%', '盤前觀察', '盤後紀錄', '賣出價', '實現損益', '資料類型'])
+    existing_df = pd.DataFrame(columns=['日期', '標的', '代號', '操作', '成本', '股數', '投入金額', '漲跌%', '盤前觀察', '盤後紀錄', '賣出價', '實現損益', '資料類型', '預判結果'])
 
 if '資料類型' not in existing_df.columns:
     existing_df['資料類型'] = '戰報'
     mask_inventory = (existing_df['股數'] > 0) | (existing_df['盤後紀錄'] == '實單持倉中')
     existing_df.loc[mask_inventory, '資料類型'] = '庫存'
+
+# 💡 確保包含「預判結果」欄位
+if '預判結果' not in existing_df.columns:
+    existing_df['預判結果'] = '⏳ 待驗證'
 
 existing_df['代號'] = existing_df['代號'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
 existing_df['標的'] = existing_df['標的'].astype(str).str.strip()
@@ -142,7 +146,7 @@ with st.sidebar:
             if not settings_idx.empty:
                 existing_df.loc[settings_idx[-1], '投入金額'] = new_capital
             else:
-                new_setting = pd.DataFrame([{"日期": f"{date.today().month}/{date.today().day}", "標的": "系統設定", "代號": "", "操作": "系統設定", "成本": 0.0, "股數": 0, "投入金額": new_capital, "漲跌%": 0.0, "盤前觀察": "", "盤後紀錄": "", "賣出價": 0.0, "實現損益": 0.0, "資料類型": "系統設定"}])
+                new_setting = pd.DataFrame([{"日期": f"{date.today().month}/{date.today().day}", "標的": "系統設定", "代號": "", "操作": "系統設定", "成本": 0.0, "股數": 0, "投入金額": new_capital, "漲跌%": 0.0, "盤前觀察": "", "盤後紀錄": "", "賣出價": 0.0, "實現損益": 0.0, "資料類型": "系統設定", "預判結果": "-"}])
                 existing_df = pd.concat([existing_df, new_setting], ignore_index=True)
             conn.update(data=existing_df)
             st.cache_data.clear()
@@ -165,7 +169,7 @@ with st.sidebar:
             p_symbol = st.text_input("代號")
             p_pre = st.text_area("🔍 盤前觀點")
             if st.form_submit_button("🚀 發布"):
-                new_r = pd.DataFrame([{"日期": p_date, "標的": p_name.strip(), "代號": p_symbol.strip(), "操作": "買進" if "買進" in p_action else "觀察", "成本": 0.0, "股數": 0, "投入金額": 0.0, "漲跌%": 0.0, "盤前觀察": p_pre, "盤後紀錄": "⏳ 等待更新...", "賣出價": 0.0, "實現損益": 0.0, "資料類型": "戰報"}])
+                new_r = pd.DataFrame([{"日期": p_date, "標的": p_name.strip(), "代號": p_symbol.strip(), "操作": "買進" if "買進" in p_action else "觀察", "成本": 0.0, "股數": 0, "投入金額": 0.0, "漲跌%": 0.0, "盤前觀察": p_pre, "盤後紀錄": "⏳ 等待更新...", "賣出價": 0.0, "實現損益": 0.0, "資料類型": "戰報", "預判結果": "⏳ 待驗證"}])
                 conn.update(data=pd.concat([existing_df, new_r], ignore_index=True)); st.cache_data.clear(); st.rerun()
 
     with st.expander("✏️ 修正 / 刪除：戰報紀錄"):
@@ -218,20 +222,24 @@ with st.sidebar:
             with st.form("post_m", clear_on_submit=True):
                 target = st.selectbox("選取戰報", waiting.apply(lambda x: f"{x['日期']} - {x['標的']}", axis=1))
                 final_action = st.selectbox("最終決策 (將覆寫盤前預設)", ["維持盤前規劃", "✅ 買進", "觀察"])
+                # 💡 新增勝率驗證選項
+                pred_result = st.radio("本日預判驗證", ["✅ 預判命中", "❌ 預判失誤", "⏳ 待驗證"], horizontal=True)
                 res_pct = st.number_input("漲跌 %", step=0.01, format="%.2f")
                 res_post = st.text_area("📝 盤後回饋")
+                
                 if st.form_submit_button("💾 儲存戰報"):
                     sd, sn = target.split(" - ", 1)
                     idx = existing_df[(existing_df['日期']==sd) & (existing_df['標的']==sn) & (existing_df['資料類型']=='戰報')].index[0]
                     if final_action != "維持盤前規劃":
                         existing_df.at[idx, '操作'] = "買進" if "買進" in final_action else "觀察"
-                    existing_df.at[idx, '漲跌%'], existing_df.at[idx, '盤後紀錄'] = float(res_pct), res_post
+                    existing_df.at[idx, '漲跌%'] = float(res_pct)
+                    existing_df.at[idx, '盤後紀錄'] = res_post
+                    existing_df.at[idx, '預判結果'] = pred_result.split(" ")[0] + " " + pred_result.split(" ")[1] # 存入 ✅ 命中
                     conn.update(data=existing_df); st.cache_data.clear(); st.rerun()
 
     st.divider()
 
-    st.markdown("### 💼 庫存系統")
-    with st.expander("🛒 實單庫存：買入 / 刪除"):
+    with st.expander("🛒 實單庫存：買入 / 刪除登錄"):
         tb_buy, tb_del = st.tabs(["✅ 買入登錄", "🗑️ 刪除誤植"])
         with tb_buy:
             with st.form("buy_f"):
@@ -239,7 +247,8 @@ with st.sidebar:
                 br_n, br_s = st.text_input("名稱"), st.text_input("代號")
                 br_p = st.number_input("均價", min_value=0.0); br_q = st.number_input("股數", min_value=1, value=100)
                 if st.form_submit_button("✅ 加入持倉"):
-                    br_n = br_n.strip(); br_s = br_s.strip()
+                    br_n = br_n.strip()
+                    br_s = br_s.strip()
                     clean_br_date = f"{br_date.month}/{br_date.day}"
                     
                     match_cond = (existing_df['資料類型'] == '庫存') & (existing_df['盤後紀錄'] == "實單持倉中") & ((existing_df['標的'] == br_n) | ((existing_df['代號'] == br_s) & (br_s != "")))
@@ -258,7 +267,7 @@ with st.sidebar:
                         existing_df.loc[idx, '日期'] = clean_br_date 
                         conn.update(data=existing_df)
                     else:
-                        new_r = pd.DataFrame([{"日期": clean_br_date, "標的": br_n, "代號": br_s, "操作": "庫存操作", "成本": float(br_p), "股數": int(br_q), "投入金額": br_p*br_q, "漲跌%": 0.0, "盤前觀察": "", "盤後紀錄": "實單持倉中", "賣出價":0.0, "實現損益":0.0, "資料類型":"庫存"}])
+                        new_r = pd.DataFrame([{"日期": clean_br_date, "標的": br_n, "代號": br_s, "操作": "庫存", "成本": float(br_p), "股數": int(br_q), "投入金額": br_p*br_q, "漲跌%": 0.0, "盤前觀察": "", "盤後紀錄": "實單持倉中", "賣出價":0.0, "實現損益":0.0, "資料類型":"庫存", "預判結果":"-"}])
                         conn.update(data=pd.concat([existing_df, new_r], ignore_index=True))
                         
                     st.cache_data.clear(); st.rerun()
@@ -266,7 +275,7 @@ with st.sidebar:
             active_h_del = existing_df[(existing_df['資料類型'] == '庫存') & (existing_df['盤後紀錄'] == "實單持倉中")]
             if not active_h_del.empty:
                 with st.form("del_buy_f"):
-                    st.info("⚠️ 僅用於刪除『輸入錯誤』的庫存紀錄。")
+                    st.info("⚠️ 僅用於刪除『輸入錯誤』的紀錄，若是正常獲利/停損了結，請使用下方『賣出結算』。")
                     del_sel = st.selectbox("選取要刪除的持倉", active_h_del.apply(lambda x: f"{x.name} | {x['日期']} - {x['標的']} (均價:{x['成本']:.2f})", axis=1))
                     if st.form_submit_button("🗑️ 確認刪除"):
                         idx_to_drop = int(del_sel.split(" | ")[0])
@@ -289,11 +298,11 @@ with st.sidebar:
                 sr_p = st.number_input("賣出單價", min_value=0.0)
                 sr_q = st.number_input(f"賣出股數 (真實持有: {curr_q})", min_value=1, max_value=safe_max_q, value=safe_max_q)
                 
-                submitted = st.form_submit_button("💰 結算獲利 (純算帳)")
+                submitted = st.form_submit_button("💰 結算獲利")
                 
                 if submitted:
                     if curr_q <= 0:
-                        st.error(f"🚨 結算失敗！實際庫存為 0，請去『🗑️ 刪除誤植』。")
+                        st.error(f"🚨 結算失敗！「{sn_sel}」的實際庫存為 0。系統將在重整後自動作廢此紀錄。")
                     else:
                         idx = existing_df[(existing_df['日期']==sd_sel) & (existing_df['標的']==sn_sel) & (existing_df['資料類型']=='庫存')].index[0]
                         cp, q_orig = existing_df.at[idx, '成本'], existing_df.at[idx, '股數']
@@ -370,7 +379,6 @@ try:
             })
         else: st.info("目前無持倉。")
 
-    # 💡 移除垃圾桶按鈕，恢復 100% 寬度排版
     war_reports = df[df['資料類型'] == '戰報'].copy()
     
     with t2:
@@ -384,12 +392,21 @@ try:
                         res_c = "#ef5350" if r['漲跌%'] > 0 else ("#26a69a" if r['漲跌%'] < 0 else "gray")
                         bg = "#ef5350" if "買進" in r['操作'] else "#bdbdbd"
                         
+                        # 💡 確保排版完全不變，只在標題行優雅加入預判結果
+                        pred_str = r.get('預判結果', '⏳ 待驗證')
+                        pred_color = "#2196f3" if "命中" in pred_str else ("#ef5350" if "失誤" in pred_str else "#9e9e9e")
+
                         st.markdown(f"""
                         <div style="border-left:6px solid {res_c}; padding:15px; background:white; margin-bottom:12px; border-radius:8px; border: 1px solid #eee;">
                             <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                                <span style='background-color:{bg}; color:white; padding:2px 8px; border-radius:4px; font-size:0.8rem;'>{r['操作']}</span>
-                                <strong>{r['標的']}</strong>
-                                <span style="color:{res_c}; font-weight:bold;">{r['漲跌%']:.2f}%</span>
+                                <div>
+                                    <span style='background-color:{bg}; color:white; padding:2px 8px; border-radius:4px; font-size:0.8rem;'>{r['操作']}</span>
+                                    <strong style="margin-left:5px;">{r['標的']}</strong>
+                                </div>
+                                <div>
+                                    <span style='color:{pred_color}; font-size:0.75rem; border:1px solid {pred_color}; padding:1px 4px; border-radius:3px; margin-right:8px;'>{pred_str}</span>
+                                    <span style="color:{res_c}; font-weight:bold;">{r['漲跌%']:.2f}%</span>
+                                </div>
                             </div>
                             <div style="background:#f8f9fa; padding:10px; border-radius:6px; margin-bottom:5px; font-size:0.95rem; text-align: justify; line-height: 1.6;">
                                 🔍 <b>盤前：</b>{format_list_text(r['盤前觀察'])}
@@ -410,9 +427,15 @@ try:
                     for idx, row in t_df.iterrows():
                         c = "#ef5350" if row['漲跌%'] > 0 else ("#26a69a" if row['漲跌%'] < 0 else "#bdbdbd")
                         
+                        pred_str = row.get('預判結果', '⏳ 待驗證')
+                        pred_color = "#2196f3" if "命中" in pred_str else ("#ef5350" if "失誤" in pred_str else "#9e9e9e")
+
                         st.markdown(f"""
                         <div style='border-left:5px solid {c}; padding:10px; background:#f8f9fa; margin-bottom:10px; border-radius:4px;'>
-                            <b>{row['日期']} | <span style='color:{c};'>{row['漲跌%']:.2f}%</span></b>
+                            <div style="display:flex; justify-content:space-between; align-items:center;">
+                                <b>{row['日期']} | <span style='color:{c};'>{row['漲跌%']:.2f}%</span></b>
+                                <span style='color:{pred_color}; font-size:0.75rem; border:1px solid {pred_color}; padding:1px 4px; border-radius:3px;'>{pred_str}</span>
+                            </div>
                             <div style='margin-top:5px; font-size:0.9rem; text-align: justify; line-height: 1.6; color:#444;'>
                                 🔍 <b>盤前：</b>{format_list_text(row['盤前觀察'])}
                             </div>
@@ -423,11 +446,19 @@ try:
                         """, unsafe_allow_html=True)
 
     st.divider()
-    c_buy = war_reports[war_reports['操作'] == '買進']
-    w_r = (len(c_buy[c_buy['漲跌%'] > 0]) / len(c_buy) * 100) if not c_buy.empty else 0.0
-    st.markdown(f"<div><span style='font-size:1.1rem; color:#555;'>📊 實際預判勝率</span><br><span style='font-size:2.5rem; font-weight:bold; color:#2196f3;'>{w_r:.1f}%</span></div>", unsafe_allow_html=True)
-    if not war_reports.empty:
-        fig = px.pie(war_reports, names='操作', hole=0.4, color='操作', color_discrete_map={'買進':'#2196f3', '觀察':'#bdbdbd', '追蹤':'#ffeb3b'})
-        fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=300); st.plotly_chart(fig, use_container_width=True)
+    
+    # 💡 核心變更：圓餅圖真實呈現「命中」與「失誤」比例
+    valid_preds = war_reports[war_reports['預判結果'].str.contains('命中|失誤', na=False, regex=True)]
+    if not valid_preds.empty:
+        hits = len(valid_preds[valid_preds['預判結果'].str.contains('命中')])
+        w_r = (hits / len(valid_preds)) * 100
+        
+        st.markdown(f"<div><span style='font-size:1.1rem; color:#555;'>🎯 盤前推演真實命中率</span><br><span style='font-size:2.5rem; font-weight:bold; color:#2196f3;'>{w_r:.1f}%</span></div>", unsafe_allow_html=True)
+        
+        fig = px.pie(valid_preds, names='預判結果', hole=0.4, color='預判結果', color_discrete_map={'✅ 命中':'#2196f3', '❌ 失誤':'#ef5350'})
+        fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=300)
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.markdown(f"<div><span style='font-size:1.1rem; color:#555;'>🎯 盤前推演真實命中率</span><br><span style='font-size:2.5rem; font-weight:bold; color:#2196f3;'>0.0%</span><br><small style='color:gray;'>尚無已驗證的盤後紀錄</small></div>", unsafe_allow_html=True)
 
 except Exception as e: st.info(f"系統準備中... ({e})")
