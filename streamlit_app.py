@@ -1,4 +1,4 @@
-Import streamlit as st
+import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 import plotly.express as px
@@ -157,10 +157,8 @@ with st.sidebar:
                 new_r = pd.DataFrame([{"日期": p_date, "標的": p_name.strip(), "代號": p_symbol.strip(), "操作": "買進" if "買進" in p_action else "觀察", "成本": 0.0, "股數": 0, "投入金額": 0.0, "漲跌%": 0.0, "盤前觀察": p_pre, "盤後紀錄": "⏳ 等待更新...", "賣出價": 0.0, "實現損益": 0.0}])
                 conn.update(data=pd.concat([existing_df, new_r], ignore_index=True)); st.cache_data.clear(); st.rerun()
 
-    # 💡 核心升級：加入日期修改與單筆刪除功能
     with st.expander("✏️ 修正 / 刪除：戰報紀錄"):
         if not existing_df.empty:
-            # 排除系統設定與持有中的實單，只抓戰報紀錄
             edit_df = existing_df[(existing_df['操作'] != '系統設定') & (existing_df['盤後紀錄'] != '實單持倉中')].copy()
             if not edit_df.empty:
                 edit_target = st.selectbox(
@@ -290,6 +288,7 @@ with st.sidebar:
                 if submitted:
                     if curr_q <= 0:
                         st.error(f"🚨 結算失敗！「{sn_sel}」的實際庫存為 0。請改用上方的『🗑️ 刪除誤植』將其清除。")
+                        st.form_submit_button("無法結算 (防當機機制)", disabled=True)
                     else:
                         idx = existing_df[(existing_df['日期']==sd_sel) & (existing_df['標的']==sn_sel)].index[0]
                         cp, q_orig = existing_df.at[idx, '成本'], existing_df.at[idx, '股數']
