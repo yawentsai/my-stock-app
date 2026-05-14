@@ -95,7 +95,14 @@ try:
     existing_df = conn.read(ttl=0)
     existing_df = existing_df.reset_index(drop=True) 
 except:
-    existing_df = pd.DataFrame(columns=['日期', '標的', '代號', '操作', '成本', '股數', '投入金額', '漲跌%', '盤前觀察', '盤後紀錄', '賣出價', '實現損益'])
+    existing_df = pd.DataFrame(columns=['日期', '標的', '代號', '操作', '成本', '股數', '投入金額', '漲跌%', '盤前觀察', '盤後紀錄', '賣出價', '實現損益', '資料類型'])
+    # 💡 核心變更：新增 '資料類型' 欄位，用來區分「戰報」還是「庫存」
+
+if '資料類型' not in existing_df.columns:
+    # 針對舊資料，簡單判定：有股數或成本的就是庫存相關，其他是戰報
+    existing_df['資料類型'] = '戰報'
+    mask_inventory = (existing_df['股數'] > 0) | (existing_df['盤後紀錄'] == '實單持倉中')
+    existing_df.loc[mask_inventory, '資料類型'] = '庫存'
 
 existing_df['代號'] = existing_df['代號'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
 existing_df['標的'] = existing_df['標的'].astype(str).str.strip()
@@ -114,13 +121,8 @@ existing_df['日期'] = existing_df['日期'].astype(str).apply(clean_date_forma
 for col in ['成本', '股數', '投入金額', '賣出價', '實現損益', '漲跌%']:
     existing_df[col] = pd.to_numeric(existing_df[col], errors='coerce').fillna(0.0)
 
-# 💡 全自動滅毒機制
-ghost_mask = (existing_df['盤後紀錄'] == '實單持倉中') & (existing_df['股數'] <= 0)
-if ghost_mask.any():
-    existing_df.loc[ghost_mask, '盤後紀錄'] = '異常作廢(股數歸零)'
-    conn.update(data=existing_df)
-    st.cache_data.clear()
 
+# 💡 核心機制：從資料庫讀取本金設定，確保永久定錨
 settings_idx = existing_df[existing_df['操作'] == '系統設定'].index
 if not settings_idx.empty:
     INITIAL_CAPITAL = float(existing_df.loc[settings_idx[-1], '投入金額'])
@@ -137,7 +139,7 @@ with st.sidebar:
             if not settings_idx.empty:
                 existing_df.loc[settings_idx[-1], '投入金額'] = new_capital
             else:
-                new_setting = pd.DataFrame([{"日期": f"{date.today().month}/{date.today().day}", "標的": "系統設定", "代號": "", "操作": "系統設定", "成本": 0.0, "股數": 0, "投入金額": new_capital, "漲跌%": 0.0, "盤前觀察": "", "盤後紀錄": "", "賣出價": 0.0, "實現損益": 0.0}])
+                new_setting = pd.DataFrame([{"日期": f"{date.today().month}/{date.today().day}", "標的": "系統設定", "代號": "", "操作": "系統設定", "成本": 0.0, "股數": 0, "投入金額": new_capital, "漲跌%": 0.0, "盤前觀察": "", "盤後紀錄": "", "賣出價": 0.0, "實現損益": 0.0, "資料類型": "系統設定"}])
                 existing_df = pd.concat([existing_df, new_setting], ignore_index=True)
             conn.update(data=existing_df)
             st.cache_data.clear()
@@ -152,6 +154,10 @@ with st.sidebar:
             st.error("發送失敗，請檢查 Secrets 設定。")
     st.divider()
 
+    # ==========================================
+    # 第一軌：戰報系統 (只記日記，不管帳本)
+    # ==========================================
+    st.markdown("### 📝 戰報系統")
     with st.expander("🌅 Step 1: 盤前計畫"):
         with st.form("pre_m", clear_on_submit=True):
             p_date = st.text_input("日期", value=f"{date.today().month}/{date.today().day}")
@@ -160,65 +166,65 @@ with st.sidebar:
             p_symbol = st.text_input("代號")
             p_pre = st.text_area("🔍 盤前觀點")
             if st.form_submit_button("🚀 發布"):
-                new_r = pd.DataFrame([{"日期": p_date, "標的": p_name.strip(), "代號": p_symbol.strip(), "操作": "買進" if "買進" in p_action else "觀察", "成本": 0.0, "股數": 0, "投入金額": 0.0, "漲跌%": 0.0, "盤前觀察": p_pre, "盤後紀錄": "⏳ 等待更新...", "賣出價": 0.0, "實現損益": 0.0}])
+                new_r = pd.DataFrame([{"日期": p_date, "標的": p_name.strip(), "代號": p_symbol.strip(), "操作": "買進" if "買進" in p_action else "觀察", "成本": 0.0, "股數": 0, "投入金額": 0.0, "漲跌%": 0.0, "盤前觀察": p_pre, "盤後紀錄": "⏳ 等待更新...", "賣出價": 0.0, "實現損益": 0.0, "資料類型": "戰報"}])
                 conn.update(data=pd.concat([existing_df, new_r], ignore_index=True)); st.cache_data.clear(); st.rerun()
 
     with st.expander("✏️ 修正 / 刪除：戰報紀錄"):
-        if not existing_df.empty:
-            edit_df = existing_df[(existing_df['操作'] != '系統設定') & (existing_df['盤後紀錄'] != '實單持倉中')].copy()
-            if not edit_df.empty:
-                edit_target = st.selectbox(
-                    "選取要處理的紀錄", 
-                    edit_df.index[::-1], 
-                    format_func=lambda x: f"{existing_df.at[x, '日期']} - {existing_df.at[x, '標的']} ({existing_df.at[x, '操作']})"
-                )
-                curr_date = existing_df.at[edit_target, '日期']
-                curr_name = existing_df.at[edit_target, '標的']
-                curr_symbol = existing_df.at[edit_target, '代號']
-                curr_pre = existing_df.at[edit_target, '盤前觀察']
-                curr_post = existing_df.at[edit_target, '盤後紀錄']
+        edit_df = existing_df[existing_df['資料類型'] == '戰報'].copy()
+        if not edit_df.empty:
+            edit_target = st.selectbox(
+                "選取要處理的紀錄", 
+                edit_df.index[::-1], 
+                format_func=lambda x: f"{existing_df.at[x, '日期']} - {existing_df.at[x, '標的']} ({existing_df.at[x, '操作']})"
+            )
+            curr_date = existing_df.at[edit_target, '日期']
+            curr_name = existing_df.at[edit_target, '標的']
+            curr_symbol = existing_df.at[edit_target, '代號']
+            curr_pre = existing_df.at[edit_target, '盤前觀察']
+            curr_post = existing_df.at[edit_target, '盤後紀錄']
+            
+            with st.form("edit_fix_form"):
+                new_date = st.text_input("修正日期", value=curr_date)
+                new_name = st.text_input("修正標的名稱", value=curr_name)
+                new_symbol = st.text_input("修正代號", value=curr_symbol)
+                new_pre = st.text_area("修正盤前觀點", value=curr_pre, height=100)
+                new_post = st.text_area("修正盤後紀錄", value=curr_post, height=100)
                 
-                with st.form("edit_fix_form"):
-                    new_date = st.text_input("修正日期", value=curr_date)
-                    new_name = st.text_input("修正標的名稱", value=curr_name)
-                    new_symbol = st.text_input("修正代號", value=curr_symbol)
-                    new_pre = st.text_area("修正盤前觀點", value=curr_pre, height=100)
-                    new_post = st.text_area("修正盤後紀錄", value=curr_post, height=100)
-                    
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        btn_update = st.form_submit_button("🔨 執行修改")
-                    with col2:
-                        btn_delete = st.form_submit_button("🗑️ 刪除此紀錄")
-                    
-                    if btn_update:
-                        existing_df.at[edit_target, '日期'] = new_date.strip()
-                        existing_df.at[edit_target, '標的'] = new_name.strip()
-                        existing_df.at[edit_target, '代號'] = new_symbol.strip()
-                        existing_df.at[edit_target, '盤前觀察'] = new_pre
-                        existing_df.at[edit_target, '盤後紀錄'] = new_post
-                        conn.update(data=existing_df)
-                        st.cache_data.clear()
-                        st.rerun()
-                    elif btn_delete:
-                        existing_df = existing_df.drop(edit_target)
-                        conn.update(data=existing_df)
-                        st.cache_data.clear()
-                        st.rerun()
-            else:
-                st.write("目前尚無紀錄可修改。")
+                col1, col2 = st.columns(2)
+                with col1:
+                    btn_update = st.form_submit_button("🔨 執行修改")
+                with col2:
+                    btn_delete = st.form_submit_button("🗑️ 刪除此紀錄")
+                
+                if btn_update:
+                    existing_df.at[edit_target, '日期'] = new_date.strip()
+                    existing_df.at[edit_target, '標的'] = new_name.strip()
+                    existing_df.at[edit_target, '代號'] = new_symbol.strip()
+                    existing_df.at[edit_target, '盤前觀察'] = new_pre
+                    existing_df.at[edit_target, '盤後紀錄'] = new_post
+                    conn.update(data=existing_df)
+                    st.cache_data.clear()
+                    st.rerun()
+                elif btn_delete:
+                    existing_df = existing_df.drop(edit_target)
+                    conn.update(data=existing_df)
+                    st.cache_data.clear()
+                    st.rerun()
+        else:
+            st.write("目前尚無戰報紀錄可修改。")
 
     with st.expander("🌇 Step 2: 盤後統整"):
-        waiting = existing_df[existing_df['盤後紀錄'] == "⏳ 等待更新..."]
+        waiting = existing_df[(existing_df['資料類型'] == '戰報') & (existing_df['盤後紀錄'] == "⏳ 等待更新...")]
         if not waiting.empty:
             with st.form("post_m", clear_on_submit=True):
-                target = st.selectbox("選取標的", waiting.apply(lambda x: f"{x['日期']} - {x['標的']}", axis=1))
+                target = st.selectbox("選取戰報", waiting.apply(lambda x: f"{x['日期']} - {x['標的']}", axis=1))
                 final_action = st.selectbox("最終決策 (將覆寫盤前預設)", ["維持盤前規劃", "✅ 買進", "觀察"])
                 res_pct = st.number_input("漲跌 %", step=0.01, format="%.2f")
                 res_post = st.text_area("📝 盤後回饋")
-                if st.form_submit_button("💾 儲存"):
+                if st.form_submit_button("💾 儲存戰報"):
                     sd, sn = target.split(" - ", 1)
-                    idx = existing_df[(existing_df['日期']==sd) & (existing_df['標的']==sn)].index[0]
+                    # 確保只改到戰報那筆
+                    idx = existing_df[(existing_df['日期']==sd) & (existing_df['標的']==sn) & (existing_df['資料類型']=='戰報')].index[0]
                     if final_action != "維持盤前規劃":
                         existing_df.at[idx, '操作'] = "買進" if "買進" in final_action else "觀察"
                     existing_df.at[idx, '漲跌%'], existing_df.at[idx, '盤後紀錄'] = float(res_pct), res_post
@@ -226,7 +232,11 @@ with st.sidebar:
 
     st.divider()
 
-    with st.expander("🛒 實單庫存：買入 / 刪除登錄"):
+    # ==========================================
+    # 第二軌：庫存系統 (只管帳本，不寫日記)
+    # ==========================================
+    st.markdown("### 💼 庫存系統")
+    with st.expander("🛒 實單庫存：買入 / 刪除"):
         tb_buy, tb_del = st.tabs(["✅ 買入登錄", "🗑️ 刪除誤植"])
         with tb_buy:
             with st.form("buy_f"):
@@ -234,38 +244,36 @@ with st.sidebar:
                 br_n, br_s = st.text_input("名稱"), st.text_input("代號")
                 br_p = st.number_input("均價", min_value=0.0); br_q = st.number_input("股數", min_value=1, value=100)
                 if st.form_submit_button("✅ 加入持倉"):
-                    br_n = br_n.strip()
-                    br_s = br_s.strip()
+                    br_n = br_n.strip(); br_s = br_s.strip()
                     clean_br_date = f"{br_date.month}/{br_date.day}"
                     
-                    match_cond = (existing_df['盤後紀錄'] == "實單持倉中") & ((existing_df['標的'] == br_n) | ((existing_df['代號'] == br_s) & (br_s != "")))
+                    # 只找「庫存」類型的持倉紀錄來加碼
+                    match_cond = (existing_df['資料類型'] == '庫存') & (existing_df['盤後紀錄'] == "實單持倉中") & ((existing_df['標的'] == br_n) | ((existing_df['代號'] == br_s) & (br_s != "")))
                     active_idx = existing_df[match_cond].index
                     
                     if not active_idx.empty:
                         idx = active_idx[0]
                         old_q = existing_df.at[idx, '股數']
                         old_amt = existing_df.at[idx, '投入金額']
-                        
                         new_q = old_q + int(br_q)
                         new_amt = old_amt + (float(br_p) * int(br_q))
                         new_p = new_amt / new_q  
-                        
                         existing_df.loc[idx, '股數'] = new_q
                         existing_df.loc[idx, '投入金額'] = new_amt
                         existing_df.loc[idx, '成本'] = new_p
                         existing_df.loc[idx, '日期'] = clean_br_date 
-                        
                         conn.update(data=existing_df)
                     else:
-                        new_r = pd.DataFrame([{"日期": clean_br_date, "標的": br_n, "代號": br_s, "操作": "買進", "成本": float(br_p), "股數": int(br_q), "投入金額": br_p*br_q, "漲跌%": 0.0, "盤後紀錄": "實單持倉中"}])
+                        # 創建一筆純淨的庫存紀錄
+                        new_r = pd.DataFrame([{"日期": clean_br_date, "標的": br_n, "代號": br_s, "操作": "庫存操作", "成本": float(br_p), "股數": int(br_q), "投入金額": br_p*br_q, "漲跌%": 0.0, "盤前觀察": "", "盤後紀錄": "實單持倉中", "賣出價":0.0, "實現損益":0.0, "資料類型":"庫存"}])
                         conn.update(data=pd.concat([existing_df, new_r], ignore_index=True))
                         
                     st.cache_data.clear(); st.rerun()
         with tb_del:
-            active_h_del = existing_df[existing_df['盤後紀錄'] == "實單持倉中"]
+            active_h_del = existing_df[(existing_df['資料類型'] == '庫存') & (existing_df['盤後紀錄'] == "實單持倉中")]
             if not active_h_del.empty:
                 with st.form("del_buy_f"):
-                    st.info("⚠️ 僅用於刪除『輸入錯誤』的紀錄，若是正常獲利/停損了結，請使用下方『賣出結算』。")
+                    st.info("⚠️ 僅用於刪除『輸入錯誤』的庫存紀錄。")
                     del_sel = st.selectbox("選取要刪除的持倉", active_h_del.apply(lambda x: f"{x.name} | {x['日期']} - {x['標的']} (均價:{x['成本']:.2f})", axis=1))
                     if st.form_submit_button("🗑️ 確認刪除"):
                         idx_to_drop = int(del_sel.split(" | ")[0])
@@ -275,58 +283,52 @@ with st.sidebar:
                 st.write("目前無持倉可刪除。")
 
     with st.expander("💸 實單庫存：賣出結算"):
-        active_h = existing_df[existing_df['盤後紀錄'] == "實單持倉中"]
+        active_h = existing_df[(existing_df['資料類型'] == '庫存') & (existing_df['盤後紀錄'] == "實單持倉中")]
         if not active_h.empty:
             with st.form("sell_f"):
                 sel = st.selectbox("選取結算對象", active_h.apply(lambda x: f"{x['日期']} - {x['標的']}", axis=1))
                 sd_sel, sn_sel = sel.split(" - ", 1)
-                curr_row = existing_df[(existing_df['日期']==sd_sel) & (existing_df['標的']==sn_sel)].iloc[0]
+                # 確保抓到對應的那筆庫存
+                curr_row = existing_df[(existing_df['日期']==sd_sel) & (existing_df['標的']==sn_sel) & (existing_df['資料類型']=='庫存')].iloc[0]
                 
                 curr_q = int(curr_row['股數'])
                 safe_max_q = max(1, curr_q)
                 
                 sr_p = st.number_input("賣出單價", min_value=0.0)
                 sr_q = st.number_input(f"賣出股數 (真實持有: {curr_q})", min_value=1, max_value=safe_max_q, value=safe_max_q)
-                sr_n = st.text_input("出場筆記")
                 
-                submitted = st.form_submit_button("💰 結算獲利")
+                submitted = st.form_submit_button("💰 結算獲利 (純算帳)")
                 
                 if submitted:
                     if curr_q <= 0:
-                        st.error(f"🚨 結算失敗！「{sn_sel}」的實際庫存為 0。系統將在重整後自動作廢此紀錄。")
+                        st.error(f"🚨 結算失敗！實際庫存為 0，請去『🗑️ 刪除誤植』。")
                     else:
-                        idx = existing_df[(existing_df['日期']==sd_sel) & (existing_df['標的']==sn_sel)].index[0]
+                        idx = existing_df[(existing_df['日期']==sd_sel) & (existing_df['標的']==sn_sel) & (existing_df['資料類型']=='庫存')].index[0]
                         cp, q_orig = existing_df.at[idx, '成本'], existing_df.at[idx, '股數']
                         
-                        old_post = existing_df.at[idx, '盤後紀錄']
-                        if old_post == "實單持倉中":
-                            old_post = ""
-                            
-                        # 💡 修正：移除贅字標籤，只保留結算筆記與舊有紀錄
                         if sr_q < q_orig:
                             new_sold = existing_df.loc[[idx]].copy()
-                            new_sold_post = f"{sr_n} \n---\n舊有紀錄：{old_post}" if old_post else f"{sr_n}"
                             new_sold['股數'], new_sold['投入金額'], new_sold['賣出價'] = sr_q, cp * sr_q, sr_p
-                            new_sold['實現損益'], new_sold['漲跌%'], new_sold['盤後紀錄'] = (sr_p - cp) * sr_q, ((sr_p - cp)/cp)*100, new_sold_post
-                            
+                            new_sold['實現損益'], new_sold['盤後紀錄'] = (sr_p - cp) * sr_q, "已結算(減碼)"
                             existing_df.at[idx, '股數'] = q_orig - sr_q
                             existing_df.at[idx, '投入金額'] = cp * (q_orig - sr_q)
-                            
                             existing_df = pd.concat([existing_df, new_sold], ignore_index=True)
                         else:
-                            new_sold_post = f"{sr_n} \n---\n舊有紀錄：{old_post}" if old_post else f"{sr_n}"
                             existing_df.at[idx, '賣出價'], existing_df.at[idx, '實現損益'] = sr_p, (sr_p - cp) * q_orig
-                            existing_df.at[idx, '漲跌%'], existing_df.at[idx, '盤後紀錄'] = ((sr_p - cp)/cp)*100, new_sold_post
+                            existing_df.at[idx, '盤後紀錄'] = "已結算(清倉)"
                         
                         conn.update(data=existing_df); st.cache_data.clear(); st.rerun()
 
 # --- 主畫面顯示 ---
 try:
+    # 全局分析時排除系統設定
     df = existing_df[existing_df['操作'] != '系統設定'].dropna(subset=['標的']).copy()
     df['標的'] = df['標的'].astype(str).str.replace(r'\d+', '', regex=True).str.strip()
     
-    total_realized = df['實現損益'].sum()
-    active_df = df[df['盤後紀錄'] == '實單持倉中']
+    # 計算損益 (只看庫存類型的)
+    inv_df = df[df['資料類型'] == '庫存']
+    total_realized = inv_df['實現損益'].sum()
+    active_df = inv_df[inv_df['盤後紀錄'] == '實單持倉中']
     
     total_unrealized = 0; active_holdings = []; ready_to_sell = []
     for _, row in active_df.iterrows():
@@ -366,23 +368,24 @@ try:
     else:
         st.markdown("""<div class="status-box" style="background-color:#e8f5e9; color:#2e7d32; border:1px dashed #4caf50;">✅ 目前持股獲利尚未達 5% 停利標準，請繼續耐心持有。</div>""", unsafe_allow_html=True)
 
-    t1, t2, t3 = st.tabs(["💼 實單持股", "📅 歷史日誌 (全紀錄)", "🗂️ 個股深度追蹤"])
+    t1, t2, t3 = st.tabs(["💼 實單持股", "📅 歷史日誌 (戰報專區)", "🗂️ 個股深度追蹤"])
     
     with t1:
         if active_holdings:
             st.dataframe(pd.DataFrame(active_holdings), use_container_width=True, hide_index=True)
         else: st.info("目前無持倉。")
 
-    completed = df.copy()
+    # 💡 歷史日誌與個股追蹤：嚴格「只顯示戰報」，絕對不顯示任何庫存的買賣或結算流水帳
+    war_reports = df[df['資料類型'] == '戰報'].copy()
     
     with t2:
-        if not completed.empty:
+        if not war_reports.empty:
             def parse_date_for_sort(d_str):
                 try: return datetime.strptime(d_str, "%m/%d")
                 except: return datetime.min
-            for d in sorted(completed['日期'].unique(), key=parse_date_for_sort, reverse=True):
-                with st.expander(f"🗓️ {d} 操盤戰報", expanded=(d == completed['日期'].max())):
-                    for idx, r in completed[completed['日期'] == d].iterrows():
+            for d in sorted(war_reports['日期'].unique(), key=parse_date_for_sort, reverse=True):
+                with st.expander(f"🗓️ {d} 操盤戰報", expanded=(d == war_reports['日期'].max())):
+                    for idx, r in war_reports[war_reports['日期'] == d].iterrows():
                         res_c = "#ef5350" if r['漲跌%'] > 0 else ("#26a69a" if r['漲跌%'] < 0 else "gray")
                         bg = "#ef5350" if "買進" in r['操作'] else "#bdbdbd"
                         col1, col2 = st.columns([0.85, 0.15])
@@ -394,12 +397,12 @@ try:
                         st.markdown("<div style='margin-bottom:12px;'></div>", unsafe_allow_html=True)
 
     with t3:
-        if not completed.empty:
-            for t in sorted(completed['標的'].unique()):
-                t_df = completed[completed['標的'] == t].copy()
+        if not war_reports.empty:
+            for t in sorted(war_reports['標的'].unique()):
+                t_df = war_reports[war_reports['標的'] == t].copy()
                 t_df['sort_date'] = pd.to_datetime(t_df['日期'].astype(str) + f'/{date.today().year}', format='%m/%d/%Y', errors='coerce')
                 t_df = t_df.sort_values(by='sort_date', ascending=False).drop(columns=['sort_date'])
-                with st.expander(f"📌 {t} (紀錄：{len(t_df)} 筆)"):
+                with st.expander(f"📌 {t} (戰報紀錄：{len(t_df)} 筆)"):
                     for idx, row in t_df.iterrows():
                         c = "#ef5350" if row['漲跌%'] > 0 else ("#26a69a" if row['漲跌%'] < 0 else "#bdbdbd")
                         col1, col2 = st.columns([0.85, 0.15])
@@ -411,11 +414,11 @@ try:
                         st.markdown("<div style='margin-bottom:10px;'></div>", unsafe_allow_html=True)
 
     st.divider()
-    c_buy = completed[completed['操作'] == '買進']
+    c_buy = war_reports[war_reports['操作'] == '買進']
     w_r = (len(c_buy[c_buy['漲跌%'] > 0]) / len(c_buy) * 100) if not c_buy.empty else 0.0
     st.markdown(f"<div><span style='font-size:1.1rem; color:#555;'>📊 實際預判勝率</span><br><span style='font-size:2.5rem; font-weight:bold; color:#2196f3;'>{w_r:.1f}%</span></div>", unsafe_allow_html=True)
-    if not df.empty:
-        fig = px.pie(df, names='操作', hole=0.4, color='操作', color_discrete_map={'買進':'#2196f3', '觀察':'#bdbdbd', '追蹤':'#ffeb3b'})
+    if not war_reports.empty:
+        fig = px.pie(war_reports, names='操作', hole=0.4, color='操作', color_discrete_map={'買進':'#2196f3', '觀察':'#bdbdbd', '追蹤':'#ffeb3b'})
         fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=300); st.plotly_chart(fig, use_container_width=True)
 
 except Exception as e: st.info(f"系統準備中... ({e})")
