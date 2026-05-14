@@ -1,4 +1,4 @@
-Import streamlit as st
+import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 import plotly.express as px
@@ -114,7 +114,13 @@ existing_df['日期'] = existing_df['日期'].astype(str).apply(clean_date_forma
 for col in ['成本', '股數', '投入金額', '賣出價', '實現損益', '漲跌%']:
     existing_df[col] = pd.to_numeric(existing_df[col], errors='coerce').fillna(0.0)
 
-# 💡 核心機制：從資料庫讀取本金設定，確保永久定錨
+# 💡 全自動滅毒機制
+ghost_mask = (existing_df['盤後紀錄'] == '實單持倉中') & (existing_df['股數'] <= 0)
+if ghost_mask.any():
+    existing_df.loc[ghost_mask, '盤後紀錄'] = '異常作廢(股數歸零)'
+    conn.update(data=existing_df)
+    st.cache_data.clear()
+
 settings_idx = existing_df[existing_df['操作'] == '系統設定'].index
 if not settings_idx.empty:
     INITIAL_CAPITAL = float(existing_df.loc[settings_idx[-1], '投入金額'])
@@ -157,10 +163,8 @@ with st.sidebar:
                 new_r = pd.DataFrame([{"日期": p_date, "標的": p_name.strip(), "代號": p_symbol.strip(), "操作": "買進" if "買進" in p_action else "觀察", "成本": 0.0, "股數": 0, "投入金額": 0.0, "漲跌%": 0.0, "盤前觀察": p_pre, "盤後紀錄": "⏳ 等待更新...", "賣出價": 0.0, "實現損益": 0.0}])
                 conn.update(data=pd.concat([existing_df, new_r], ignore_index=True)); st.cache_data.clear(); st.rerun()
 
-    # 💡 核心升級：加入日期修改與單筆刪除功能
     with st.expander("✏️ 修正 / 刪除：戰報紀錄"):
         if not existing_df.empty:
-            # 排除系統設定與持有中的實單，只抓戰報紀錄
             edit_df = existing_df[(existing_df['操作'] != '系統設定') & (existing_df['盤後紀錄'] != '實單持倉中')].copy()
             if not edit_df.empty:
                 edit_target = st.selectbox(
@@ -289,20 +293,31 @@ with st.sidebar:
                 
                 if submitted:
                     if curr_q <= 0:
-                        st.error(f"🚨 結算失敗！「{sn_sel}」的實際庫存為 0。請改用上方的『🗑️ 刪除誤植』將其清除。")
+                        st.error(f"🚨 結算失敗！「{sn_sel}」的實際庫存為 0。系統將在重整後自動作廢此紀錄。")
                     else:
                         idx = existing_df[(existing_df['日期']==sd_sel) & (existing_df['標的']==sn_sel)].index[0]
                         cp, q_orig = existing_df.at[idx, '成本'], existing_df.at[idx, '股數']
+                        
+                        old_post = existing_df.at[idx, '盤後紀錄']
+                        if old_post == "實單持倉中":
+                            old_post = ""
+                            
+                        # 💡 修正：移除贅字標籤，只保留結算筆記與舊有紀錄
                         if sr_q < q_orig:
                             new_sold = existing_df.loc[[idx]].copy()
+                            new_sold_post = f"{sr_n} \n---\n舊有紀錄：{old_post}" if old_post else f"{sr_n}"
                             new_sold['股數'], new_sold['投入金額'], new_sold['賣出價'] = sr_q, cp * sr_q, sr_p
-                            new_sold['實現損益'], new_sold['漲跌%'], new_sold['盤後紀錄'] = (sr_p - cp) * sr_q, ((sr_p - cp)/cp)*100, f"減碼：{sr_n}"
+                            new_sold['實現損益'], new_sold['漲跌%'], new_sold['盤後紀錄'] = (sr_p - cp) * sr_q, ((sr_p - cp)/cp)*100, new_sold_post
+                            
                             existing_df.at[idx, '股數'] = q_orig - sr_q
                             existing_df.at[idx, '投入金額'] = cp * (q_orig - sr_q)
+                            
                             existing_df = pd.concat([existing_df, new_sold], ignore_index=True)
                         else:
+                            new_sold_post = f"{sr_n} \n---\n舊有紀錄：{old_post}" if old_post else f"{sr_n}"
                             existing_df.at[idx, '賣出價'], existing_df.at[idx, '實現損益'] = sr_p, (sr_p - cp) * q_orig
-                            existing_df.at[idx, '漲跌%'], existing_df.at[idx, '盤後紀錄'] = ((sr_p - cp)/cp)*100, f"清倉：{sr_n}"
+                            existing_df.at[idx, '漲跌%'], existing_df.at[idx, '盤後紀錄'] = ((sr_p - cp)/cp)*100, new_sold_post
+                        
                         conn.update(data=existing_df); st.cache_data.clear(); st.rerun()
 
 # --- 主畫面顯示 ---
@@ -336,94 +351,47 @@ try:
     st.markdown("### 🏦 真實資產結算看板")
     st.markdown(f"""
     <div class="dashboard-grid">
-        <div class="metric-card">
-            <div class="metric-label">投入總本金</div>
-            <div class="metric-value">${INITIAL_CAPITAL:,.0f}</div>
-        </div>
-        <div class="metric-card">
-            <div class="metric-label">已實現獲利</div>
-            <div class="metric-value" style="color:{realized_c};">${total_realized:,.0f}</div>
-        </div>
-        <div class="metric-card">
-            <div class="metric-label">未實現獲利</div>
-            <div class="metric-value" style="color:{unrealized_c};">${total_unrealized:,.0f}</div>
-        </div>
-        <div class="metric-card" style="background:{profit_bg}; border-color:{profit_c}22;">
-            <div class="metric-label" style="color:{profit_c};">🎯 總獲利 %</div>
-            <div class="metric-value" style="color:{profit_c};">{roi_pct:.2f}%</div>
-        </div>
-        <div class="metric-card" style="background:#fff3e0;">
-            <div class="metric-label" style="color:#e65100;">達 5% 停利檔數</div>
-            <div class="metric-value" style="color:#e65100;">{target_count} 檔</div>
-        </div>
-        <div class="metric-card">
-            <div class="metric-label">總資產權益</div>
-            <div class="metric-value">${equity:,.0f}</div>
-        </div>
+        <div class="metric-card"><div class="metric-label">投入總本金</div><div class="metric-value">${INITIAL_CAPITAL:,.0f}</div></div>
+        <div class="metric-card"><div class="metric-label">已實現獲利</div><div class="metric-value" style="color:{realized_c};">${total_realized:,.0f}</div></div>
+        <div class="metric-card"><div class="metric-label">未實現獲利</div><div class="metric-value" style="color:{unrealized_c};">${total_unrealized:,.0f}</div></div>
+        <div class="metric-card" style="background:{profit_bg}; border-color:{profit_c}22;"><div class="metric-label" style="color:{profit_c};">🎯 總獲利 %</div><div class="metric-value" style="color:{profit_c};">{roi_pct:.2f}%</div></div>
+        <div class="metric-card" style="background:#fff3e0;"><div class="metric-label" style="color:#e65100;">達 5% 停利檔數</div><div class="metric-value" style="color:#e65100;">{target_count} 檔</div></div>
+        <div class="metric-card"><div class="metric-label">總資產權益</div><div class="metric-value">${equity:,.0f}</div></div>
     </div>
     """, unsafe_allow_html=True)
 
     if ready_to_sell:
         items_html = "".join([f"<div style='display: flex; justify-content: space-between; border-bottom: 1px dashed #ffcdd2; padding: 6px 0;'><span style='font-weight:bold; color:#b71c1c;'>{item['name']} ({item['symbol']})</span><span style='font-weight:bold; color:#c62828;'>+{item['pct']:.2f}%</span></div>" for item in ready_to_sell])
-        
-        status_msg = f"""
-        <div style="text-align: left; padding: 4px;">
-            <div style="font-weight: bold; margin-bottom: 8px; font-size: 1.05rem; border-bottom: 2px solid #ef5350; padding-bottom: 6px; color: #b71c1c;">
-                🚨 停利標準已達標 (共 {target_count} 檔等待結算)：
-            </div>
-            <div style="padding: 0 5px;">
-                {items_html}
-            </div>
-        </div>
-        """
-        st.markdown(f"""<div class="status-box" style="background-color:#ffebee; border:2px solid #ef5350; margin-bottom:20px;">{status_msg}</div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div class="status-box" style="background-color:#ffebee; border:2px solid #ef5350; margin-bottom:20px;">🚨 停利標準已達標 (共 {target_count} 檔等待結算)：<br>{items_html}</div>""", unsafe_allow_html=True)
     else:
         st.markdown("""<div class="status-box" style="background-color:#e8f5e9; color:#2e7d32; border:1px dashed #4caf50;">✅ 目前持股獲利尚未達 5% 停利標準，請繼續耐心持有。</div>""", unsafe_allow_html=True)
 
-    t1, t2, t3 = st.tabs(["💼 實單持股", "📅 歷史日誌 (統整)", "🗂️ 個股深度追蹤"])
+    t1, t2, t3 = st.tabs(["💼 實單持股", "📅 歷史日誌 (全紀錄)", "🗂️ 個股深度追蹤"])
     
     with t1:
         if active_holdings:
-            st.dataframe(pd.DataFrame(active_holdings), use_container_width=True, hide_index=True, column_config={
-                "現價": st.column_config.NumberColumn(format="%.2f"),
-                "均價": st.column_config.NumberColumn(format="%.2f"),
-                "損益金額": st.column_config.NumberColumn(format="%.0f"),
-                "損益率%": st.column_config.NumberColumn(format="%.2f%%")
-            })
+            st.dataframe(pd.DataFrame(active_holdings), use_container_width=True, hide_index=True)
         else: st.info("目前無持倉。")
 
-    completed = df[~df['盤後紀錄'].isin(["實單持倉中", "僅新聞追蹤"])].copy()
+    completed = df.copy()
     
     with t2:
         if not completed.empty:
             def parse_date_for_sort(d_str):
                 try: return datetime.strptime(d_str, "%m/%d")
                 except: return datetime.min
-            
             for d in sorted(completed['日期'].unique(), key=parse_date_for_sort, reverse=True):
                 with st.expander(f"🗓️ {d} 操盤戰報", expanded=(d == completed['日期'].max())):
-                    for _, r in completed[completed['日期'] == d].iterrows():
+                    for idx, r in completed[completed['日期'] == d].iterrows():
                         res_c = "#ef5350" if r['漲跌%'] > 0 else ("#26a69a" if r['漲跌%'] < 0 else "gray")
                         bg = "#ef5350" if "買進" in r['操作'] else "#bdbdbd"
-                        
-                        pre_text = format_list_text(r['盤前觀察'])
-                        post_text = format_list_text(r['盤後紀錄'])
-                        
-                        st.markdown(f"""
-                        <div style="border-left:6px solid {res_c}; padding:15px; background:white; margin-bottom:12px; border-radius:8px; border: 1px solid #eee;">
-                            <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                                <span style='background-color:{bg}; color:white; padding:2px 8px; border-radius:4px; font-size:0.8rem;'>{r['操作']}</span>
-                                <strong>{r['標的']}</strong>
-                                <span style="color:{res_c}; font-weight:bold;">{r['漲跌%']:.2f}%</span>
-                            </div>
-                            <div style="background:#f8f9fa; padding:10px; border-radius:6px; margin-bottom:5px; font-size:0.95rem; text-align: justify; line-height: 1.6;">
-                                🔍 <b>盤前：</b>{pre_text}
-                            </div>
-                            <div style="background:#fff; padding:10px; border-radius:6px; border:1px dashed #ddd; font-size:0.95rem; text-align: justify; line-height: 1.6;">
-                                📝 <b>盤後：</b>{post_text}
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True)
+                        col1, col2 = st.columns([0.85, 0.15])
+                        with col1:
+                            st.markdown(f"""<div style="border-left:6px solid {res_c}; padding:10px; background:white; border-radius:8px; border: 1px solid #eee;"><div style="display:flex; justify-content:space-between; margin-bottom:8px;"><span style='background-color:{bg}; color:white; padding:2px 8px; border-radius:4px; font-size:0.8rem;'>{r['操作']}</span><strong>{r['標的']}</strong><span style="color:{res_c}; font-weight:bold;">{r['漲跌%']:.2f}%</span></div><div style="background:#f8f9fa; padding:10px; border-radius:6px; margin-bottom:5px; font-size:0.95rem;">🔍 <b>盤前：</b>{format_list_text(r['盤前觀察'])}</div><div style="background:#fff; padding:10px; border-radius:6px; border:1px dashed #ddd; font-size:0.95rem;">📝 <b>盤後：</b>{format_list_text(r['盤後紀錄'])}</div></div>""", unsafe_allow_html=True)
+                        with col2:
+                            if st.button("🗑️", key=f"del_t2_{idx}"):
+                                existing_df = existing_df.drop(idx); conn.update(data=existing_df); st.cache_data.clear(); st.rerun()
+                        st.markdown("<div style='margin-bottom:12px;'></div>", unsafe_allow_html=True)
 
     with t3:
         if not completed.empty:
@@ -431,25 +399,16 @@ try:
                 t_df = completed[completed['標的'] == t].copy()
                 t_df['sort_date'] = pd.to_datetime(t_df['日期'].astype(str) + f'/{date.today().year}', format='%m/%d/%Y', errors='coerce')
                 t_df = t_df.sort_values(by='sort_date', ascending=False).drop(columns=['sort_date'])
-                
                 with st.expander(f"📌 {t} (紀錄：{len(t_df)} 筆)"):
-                    for _, row in t_df.iterrows():
+                    for idx, row in t_df.iterrows():
                         c = "#ef5350" if row['漲跌%'] > 0 else ("#26a69a" if row['漲跌%'] < 0 else "#bdbdbd")
-                        
-                        pre_text = format_list_text(row['盤前觀察'])
-                        post_text = format_list_text(row['盤後紀錄'])
-                        
-                        st.markdown(f"""
-                        <div style='border-left:5px solid {c}; padding:10px; background:#f8f9fa; margin-bottom:10px; border-radius:4px;'>
-                            <b>{row['日期']} | <span style='color:{c};'>{row['漲跌%']:.2f}%</span></b>
-                            <div style='margin-top:5px; font-size:0.9rem; text-align: justify; line-height: 1.6; color:#444;'>
-                                🔍 <b>盤前：</b>{pre_text}
-                            </div>
-                            <div style='margin-top:5px; font-size:0.9rem; text-align: justify; line-height: 1.6; color:#444;'>
-                                📝 <b>盤後：</b>{post_text}
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True)
+                        col1, col2 = st.columns([0.85, 0.15])
+                        with col1:
+                            st.markdown(f"""<div style='border-left:5px solid {c}; padding:10px; background:#f8f9fa; border-radius:4px;'><b>{row['日期']} | <span style='color:{c};'>{row['漲跌%']:.2f}%</span></b><div style='margin-top:5px; font-size:0.9rem; color:#444;'>🔍 盤前：{format_list_text(row['盤前觀察'])}</div><div style='margin-top:5px; font-size:0.9rem; color:#444;'>📝 盤後：{format_list_text(row['盤後紀錄'])}</div></div>""", unsafe_allow_html=True)
+                        with col2:
+                            if st.button("🗑️", key=f"del_t3_{idx}"):
+                                existing_df = existing_df.drop(idx); conn.update(data=existing_df); st.cache_data.clear(); st.rerun()
+                        st.markdown("<div style='margin-bottom:10px;'></div>", unsafe_allow_html=True)
 
     st.divider()
     c_buy = completed[completed['操作'] == '買進']
