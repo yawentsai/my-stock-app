@@ -1,4 +1,4 @@
-import streamlit as st
+Import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 import plotly.express as px
@@ -157,8 +157,10 @@ with st.sidebar:
                 new_r = pd.DataFrame([{"日期": p_date, "標的": p_name.strip(), "代號": p_symbol.strip(), "操作": "買進" if "買進" in p_action else "觀察", "成本": 0.0, "股數": 0, "投入金額": 0.0, "漲跌%": 0.0, "盤前觀察": p_pre, "盤後紀錄": "⏳ 等待更新...", "賣出價": 0.0, "實現損益": 0.0}])
                 conn.update(data=pd.concat([existing_df, new_r], ignore_index=True)); st.cache_data.clear(); st.rerun()
 
+    # 💡 核心升級：加入日期修改與單筆刪除功能
     with st.expander("✏️ 修正 / 刪除：戰報紀錄"):
         if not existing_df.empty:
+            # 排除系統設定與持有中的實單，只抓戰報紀錄
             edit_df = existing_df[(existing_df['操作'] != '系統設定') & (existing_df['盤後紀錄'] != '實單持倉中')].copy()
             if not edit_df.empty:
                 edit_target = st.selectbox(
@@ -390,8 +392,7 @@ try:
             })
         else: st.info("目前無持倉。")
 
-    # 💡 核心升級：歷史日誌絕對保存所有操作，包含清倉與減碼，不因狀態改變而隱形
-    completed = df[df['操作'] != '系統設定'].copy()
+    completed = df[~df['盤後紀錄'].isin(["實單持倉中", "僅新聞追蹤"])].copy()
     
     with t2:
         if not completed.empty:
