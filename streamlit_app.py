@@ -96,10 +96,8 @@ try:
     existing_df = existing_df.reset_index(drop=True) 
 except:
     existing_df = pd.DataFrame(columns=['日期', '標的', '代號', '操作', '成本', '股數', '投入金額', '漲跌%', '盤前觀察', '盤後紀錄', '賣出價', '實現損益', '資料類型'])
-    # 💡 核心變更：新增 '資料類型' 欄位，用來區分「戰報」還是「庫存」
 
 if '資料類型' not in existing_df.columns:
-    # 針對舊資料，簡單判定：有股數或成本的就是庫存相關，其他是戰報
     existing_df['資料類型'] = '戰報'
     mask_inventory = (existing_df['股數'] > 0) | (existing_df['盤後紀錄'] == '實單持倉中')
     existing_df.loc[mask_inventory, '資料類型'] = '庫存'
@@ -121,8 +119,13 @@ existing_df['日期'] = existing_df['日期'].astype(str).apply(clean_date_forma
 for col in ['成本', '股數', '投入金額', '賣出價', '實現損益', '漲跌%']:
     existing_df[col] = pd.to_numeric(existing_df[col], errors='coerce').fillna(0.0)
 
+# 💡 全自動滅毒機制
+ghost_mask = (existing_df['盤後紀錄'] == '實單持倉中') & (existing_df['股數'] <= 0)
+if ghost_mask.any():
+    existing_df.loc[ghost_mask, '盤後紀錄'] = '異常作廢(股數歸零)'
+    conn.update(data=existing_df)
+    st.cache_data.clear()
 
-# 💡 核心機制：從資料庫讀取本金設定，確保永久定錨
 settings_idx = existing_df[existing_df['操作'] == '系統設定'].index
 if not settings_idx.empty:
     INITIAL_CAPITAL = float(existing_df.loc[settings_idx[-1], '投入金額'])
@@ -154,10 +157,6 @@ with st.sidebar:
             st.error("發送失敗，請檢查 Secrets 設定。")
     st.divider()
 
-    # ==========================================
-    # 第一軌：戰報系統 (只記日記，不管帳本)
-    # ==========================================
-    st.markdown("### 📝 戰報系統")
     with st.expander("🌅 Step 1: 盤前計畫"):
         with st.form("pre_m", clear_on_submit=True):
             p_date = st.text_input("日期", value=f"{date.today().month}/{date.today().day}")
@@ -223,7 +222,6 @@ with st.sidebar:
                 res_post = st.text_area("📝 盤後回饋")
                 if st.form_submit_button("💾 儲存戰報"):
                     sd, sn = target.split(" - ", 1)
-                    # 確保只改到戰報那筆
                     idx = existing_df[(existing_df['日期']==sd) & (existing_df['標的']==sn) & (existing_df['資料類型']=='戰報')].index[0]
                     if final_action != "維持盤前規劃":
                         existing_df.at[idx, '操作'] = "買進" if "買進" in final_action else "觀察"
@@ -232,9 +230,6 @@ with st.sidebar:
 
     st.divider()
 
-    # ==========================================
-    # 第二軌：庫存系統 (只管帳本，不寫日記)
-    # ==========================================
     st.markdown("### 💼 庫存系統")
     with st.expander("🛒 實單庫存：買入 / 刪除"):
         tb_buy, tb_del = st.tabs(["✅ 買入登錄", "🗑️ 刪除誤植"])
@@ -247,7 +242,6 @@ with st.sidebar:
                     br_n = br_n.strip(); br_s = br_s.strip()
                     clean_br_date = f"{br_date.month}/{br_date.day}"
                     
-                    # 只找「庫存」類型的持倉紀錄來加碼
                     match_cond = (existing_df['資料類型'] == '庫存') & (existing_df['盤後紀錄'] == "實單持倉中") & ((existing_df['標的'] == br_n) | ((existing_df['代號'] == br_s) & (br_s != "")))
                     active_idx = existing_df[match_cond].index
                     
@@ -264,7 +258,6 @@ with st.sidebar:
                         existing_df.loc[idx, '日期'] = clean_br_date 
                         conn.update(data=existing_df)
                     else:
-                        # 創建一筆純淨的庫存紀錄
                         new_r = pd.DataFrame([{"日期": clean_br_date, "標的": br_n, "代號": br_s, "操作": "庫存操作", "成本": float(br_p), "股數": int(br_q), "投入金額": br_p*br_q, "漲跌%": 0.0, "盤前觀察": "", "盤後紀錄": "實單持倉中", "賣出價":0.0, "實現損益":0.0, "資料類型":"庫存"}])
                         conn.update(data=pd.concat([existing_df, new_r], ignore_index=True))
                         
@@ -288,7 +281,6 @@ with st.sidebar:
             with st.form("sell_f"):
                 sel = st.selectbox("選取結算對象", active_h.apply(lambda x: f"{x['日期']} - {x['標的']}", axis=1))
                 sd_sel, sn_sel = sel.split(" - ", 1)
-                # 確保抓到對應的那筆庫存
                 curr_row = existing_df[(existing_df['日期']==sd_sel) & (existing_df['標的']==sn_sel) & (existing_df['資料類型']=='庫存')].iloc[0]
                 
                 curr_q = int(curr_row['股數'])
@@ -321,11 +313,9 @@ with st.sidebar:
 
 # --- 主畫面顯示 ---
 try:
-    # 全局分析時排除系統設定
     df = existing_df[existing_df['操作'] != '系統設定'].dropna(subset=['標的']).copy()
     df['標的'] = df['標的'].astype(str).str.replace(r'\d+', '', regex=True).str.strip()
     
-    # 計算損益 (只看庫存類型的)
     inv_df = df[df['資料類型'] == '庫存']
     total_realized = inv_df['實現損益'].sum()
     active_df = inv_df[inv_df['盤後紀錄'] == '實單持倉中']
@@ -372,10 +362,15 @@ try:
     
     with t1:
         if active_holdings:
-            st.dataframe(pd.DataFrame(active_holdings), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(active_holdings), use_container_width=True, hide_index=True, column_config={
+                "現價": st.column_config.NumberColumn(format="%.2f"),
+                "均價": st.column_config.NumberColumn(format="%.2f"),
+                "損益金額": st.column_config.NumberColumn(format="%.0f"),
+                "損益率%": st.column_config.NumberColumn(format="%.2f%%")
+            })
         else: st.info("目前無持倉。")
 
-    # 💡 歷史日誌與個股追蹤：嚴格「只顯示戰報」，絕對不顯示任何庫存的買賣或結算流水帳
+    # 💡 移除垃圾桶按鈕，恢復 100% 寬度排版
     war_reports = df[df['資料類型'] == '戰報'].copy()
     
     with t2:
@@ -388,13 +383,22 @@ try:
                     for idx, r in war_reports[war_reports['日期'] == d].iterrows():
                         res_c = "#ef5350" if r['漲跌%'] > 0 else ("#26a69a" if r['漲跌%'] < 0 else "gray")
                         bg = "#ef5350" if "買進" in r['操作'] else "#bdbdbd"
-                        col1, col2 = st.columns([0.85, 0.15])
-                        with col1:
-                            st.markdown(f"""<div style="border-left:6px solid {res_c}; padding:10px; background:white; border-radius:8px; border: 1px solid #eee;"><div style="display:flex; justify-content:space-between; margin-bottom:8px;"><span style='background-color:{bg}; color:white; padding:2px 8px; border-radius:4px; font-size:0.8rem;'>{r['操作']}</span><strong>{r['標的']}</strong><span style="color:{res_c}; font-weight:bold;">{r['漲跌%']:.2f}%</span></div><div style="background:#f8f9fa; padding:10px; border-radius:6px; margin-bottom:5px; font-size:0.95rem;">🔍 <b>盤前：</b>{format_list_text(r['盤前觀察'])}</div><div style="background:#fff; padding:10px; border-radius:6px; border:1px dashed #ddd; font-size:0.95rem;">📝 <b>盤後：</b>{format_list_text(r['盤後紀錄'])}</div></div>""", unsafe_allow_html=True)
-                        with col2:
-                            if st.button("🗑️", key=f"del_t2_{idx}"):
-                                existing_df = existing_df.drop(idx); conn.update(data=existing_df); st.cache_data.clear(); st.rerun()
-                        st.markdown("<div style='margin-bottom:12px;'></div>", unsafe_allow_html=True)
+                        
+                        st.markdown(f"""
+                        <div style="border-left:6px solid {res_c}; padding:15px; background:white; margin-bottom:12px; border-radius:8px; border: 1px solid #eee;">
+                            <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                                <span style='background-color:{bg}; color:white; padding:2px 8px; border-radius:4px; font-size:0.8rem;'>{r['操作']}</span>
+                                <strong>{r['標的']}</strong>
+                                <span style="color:{res_c}; font-weight:bold;">{r['漲跌%']:.2f}%</span>
+                            </div>
+                            <div style="background:#f8f9fa; padding:10px; border-radius:6px; margin-bottom:5px; font-size:0.95rem; text-align: justify; line-height: 1.6;">
+                                🔍 <b>盤前：</b>{format_list_text(r['盤前觀察'])}
+                            </div>
+                            <div style="background:#fff; padding:10px; border-radius:6px; border:1px dashed #ddd; font-size:0.95rem; text-align: justify; line-height: 1.6;">
+                                📝 <b>盤後：</b>{format_list_text(r['盤後紀錄'])}
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
 
     with t3:
         if not war_reports.empty:
@@ -405,13 +409,18 @@ try:
                 with st.expander(f"📌 {t} (戰報紀錄：{len(t_df)} 筆)"):
                     for idx, row in t_df.iterrows():
                         c = "#ef5350" if row['漲跌%'] > 0 else ("#26a69a" if row['漲跌%'] < 0 else "#bdbdbd")
-                        col1, col2 = st.columns([0.85, 0.15])
-                        with col1:
-                            st.markdown(f"""<div style='border-left:5px solid {c}; padding:10px; background:#f8f9fa; border-radius:4px;'><b>{row['日期']} | <span style='color:{c};'>{row['漲跌%']:.2f}%</span></b><div style='margin-top:5px; font-size:0.9rem; color:#444;'>🔍 盤前：{format_list_text(row['盤前觀察'])}</div><div style='margin-top:5px; font-size:0.9rem; color:#444;'>📝 盤後：{format_list_text(row['盤後紀錄'])}</div></div>""", unsafe_allow_html=True)
-                        with col2:
-                            if st.button("🗑️", key=f"del_t3_{idx}"):
-                                existing_df = existing_df.drop(idx); conn.update(data=existing_df); st.cache_data.clear(); st.rerun()
-                        st.markdown("<div style='margin-bottom:10px;'></div>", unsafe_allow_html=True)
+                        
+                        st.markdown(f"""
+                        <div style='border-left:5px solid {c}; padding:10px; background:#f8f9fa; margin-bottom:10px; border-radius:4px;'>
+                            <b>{row['日期']} | <span style='color:{c};'>{row['漲跌%']:.2f}%</span></b>
+                            <div style='margin-top:5px; font-size:0.9rem; text-align: justify; line-height: 1.6; color:#444;'>
+                                🔍 <b>盤前：</b>{format_list_text(row['盤前觀察'])}
+                            </div>
+                            <div style='margin-top:5px; font-size:0.9rem; text-align: justify; line-height: 1.6; color:#444;'>
+                                📝 <b>盤後：</b>{format_list_text(row['盤後紀錄'])}
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
 
     st.divider()
     c_buy = war_reports[war_reports['操作'] == '買進']
