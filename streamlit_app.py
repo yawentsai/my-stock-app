@@ -102,7 +102,6 @@ if '資料類型' not in existing_df.columns:
     mask_inventory = (existing_df['股數'] > 0) | (existing_df['盤後紀錄'] == '實單持倉中')
     existing_df.loc[mask_inventory, '資料類型'] = '庫存'
 
-# 💡 確保包含「預判結果」欄位
 if '預判結果' not in existing_df.columns:
     existing_df['預判結果'] = '⏳ 待驗證'
 
@@ -123,7 +122,7 @@ existing_df['日期'] = existing_df['日期'].astype(str).apply(clean_date_forma
 for col in ['成本', '股數', '投入金額', '賣出價', '實現損益', '漲跌%']:
     existing_df[col] = pd.to_numeric(existing_df[col], errors='coerce').fillna(0.0)
 
-# 💡 全自動滅毒機制
+# 全自動滅毒機制
 ghost_mask = (existing_df['盤後紀錄'] == '實單持倉中') & (existing_df['股數'] <= 0)
 if ghost_mask.any():
     existing_df.loc[ghost_mask, '盤後紀錄'] = '異常作廢(股數歸零)'
@@ -222,7 +221,6 @@ with st.sidebar:
             with st.form("post_m", clear_on_submit=True):
                 target = st.selectbox("選取戰報", waiting.apply(lambda x: f"{x['日期']} - {x['標的']}", axis=1))
                 final_action = st.selectbox("最終決策 (將覆寫盤前預設)", ["維持盤前規劃", "✅ 買進", "觀察"])
-                # 💡 新增勝率驗證選項
                 pred_result = st.radio("本日預判驗證", ["✅ 預判命中", "❌ 預判失誤", "⏳ 待驗證"], horizontal=True)
                 res_pct = st.number_input("漲跌 %", step=0.01, format="%.2f")
                 res_post = st.text_area("📝 盤後回饋")
@@ -234,7 +232,7 @@ with st.sidebar:
                         existing_df.at[idx, '操作'] = "買進" if "買進" in final_action else "觀察"
                     existing_df.at[idx, '漲跌%'] = float(res_pct)
                     existing_df.at[idx, '盤後紀錄'] = res_post
-                    existing_df.at[idx, '預判結果'] = pred_result.split(" ")[0] + " " + pred_result.split(" ")[1] # 存入 ✅ 命中
+                    existing_df.at[idx, '預判結果'] = pred_result.split(" ")[0] + " " + pred_result.split(" ")[1] 
                     conn.update(data=existing_df); st.cache_data.clear(); st.rerun()
 
     st.divider()
@@ -298,7 +296,7 @@ with st.sidebar:
                 sr_p = st.number_input("賣出單價", min_value=0.0)
                 sr_q = st.number_input(f"賣出股數 (真實持有: {curr_q})", min_value=1, max_value=safe_max_q, value=safe_max_q)
                 
-                submitted = st.form_submit_button("💰 結算獲利")
+                submitted = st.form_submit_button("💰 結算獲利 (純算帳)")
                 
                 if submitted:
                     if curr_q <= 0:
@@ -392,10 +390,7 @@ try:
                         res_c = "#ef5350" if r['漲跌%'] > 0 else ("#26a69a" if r['漲跌%'] < 0 else "gray")
                         bg = "#ef5350" if "買進" in r['操作'] else "#bdbdbd"
                         
-                        # 💡 確保排版完全不變，只在標題行優雅加入預判結果
-                        pred_str = r.get('預判結果', '⏳ 待驗證')
-                        pred_color = "#2196f3" if "命中" in pred_str else ("#ef5350" if "失誤" in pred_str else "#9e9e9e")
-
+                        # 💡 確保排版完全不變，隱藏預判結果的文字標籤
                         st.markdown(f"""
                         <div style="border-left:6px solid {res_c}; padding:15px; background:white; margin-bottom:12px; border-radius:8px; border: 1px solid #eee;">
                             <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
@@ -404,7 +399,6 @@ try:
                                     <strong style="margin-left:5px;">{r['標的']}</strong>
                                 </div>
                                 <div>
-                                    <span style='color:{pred_color}; font-size:0.75rem; border:1px solid {pred_color}; padding:1px 4px; border-radius:3px; margin-right:8px;'>{pred_str}</span>
                                     <span style="color:{res_c}; font-weight:bold;">{r['漲跌%']:.2f}%</span>
                                 </div>
                             </div>
@@ -427,14 +421,11 @@ try:
                     for idx, row in t_df.iterrows():
                         c = "#ef5350" if row['漲跌%'] > 0 else ("#26a69a" if row['漲跌%'] < 0 else "#bdbdbd")
                         
-                        pred_str = row.get('預判結果', '⏳ 待驗證')
-                        pred_color = "#2196f3" if "命中" in pred_str else ("#ef5350" if "失誤" in pred_str else "#9e9e9e")
-
+                        # 💡 同樣隱藏預判結果的文字標籤
                         st.markdown(f"""
                         <div style='border-left:5px solid {c}; padding:10px; background:#f8f9fa; margin-bottom:10px; border-radius:4px;'>
                             <div style="display:flex; justify-content:space-between; align-items:center;">
                                 <b>{row['日期']} | <span style='color:{c};'>{row['漲跌%']:.2f}%</span></b>
-                                <span style='color:{pred_color}; font-size:0.75rem; border:1px solid {pred_color}; padding:1px 4px; border-radius:3px;'>{pred_str}</span>
                             </div>
                             <div style='margin-top:5px; font-size:0.9rem; text-align: justify; line-height: 1.6; color:#444;'>
                                 🔍 <b>盤前：</b>{format_list_text(row['盤前觀察'])}
@@ -447,7 +438,6 @@ try:
 
     st.divider()
     
-    # 💡 核心變更：圓餅圖真實呈現「命中」與「失誤」比例
     valid_preds = war_reports[war_reports['預判結果'].str.contains('命中|失誤', na=False, regex=True)]
     if not valid_preds.empty:
         hits = len(valid_preds[valid_preds['預判結果'].str.contains('命中')])
