@@ -157,12 +157,12 @@ with st.sidebar:
                 new_r = pd.DataFrame([{"日期": p_date, "標的": p_name.strip(), "代號": p_symbol.strip(), "操作": "買進" if "買進" in p_action else "觀察", "成本": 0.0, "股數": 0, "投入金額": 0.0, "漲跌%": 0.0, "盤前觀察": p_pre, "盤後紀錄": "⏳ 等待更新...", "賣出價": 0.0, "實現損益": 0.0}])
                 conn.update(data=pd.concat([existing_df, new_r], ignore_index=True)); st.cache_data.clear(); st.rerun()
 
-    with st.expander("✏️ 修正 / 刪除：戰報紀錄"):
+    with st.expander("✏️ 修正：內容微調 (側邊欄)"):
         if not existing_df.empty:
             edit_df = existing_df[(existing_df['操作'] != '系統設定') & (existing_df['盤後紀錄'] != '實單持倉中')].copy()
             if not edit_df.empty:
                 edit_target = st.selectbox(
-                    "選取要處理的紀錄", 
+                    "選取要修改的紀錄", 
                     edit_df.index[::-1], 
                     format_func=lambda x: f"{existing_df.at[x, '日期']} - {existing_df.at[x, '標的']} ({existing_df.at[x, '操作']})"
                 )
@@ -179,23 +179,12 @@ with st.sidebar:
                     new_pre = st.text_area("修正盤前觀點", value=curr_pre, height=100)
                     new_post = st.text_area("修正盤後紀錄", value=curr_post, height=100)
                     
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        btn_update = st.form_submit_button("🔨 執行修改")
-                    with col2:
-                        btn_delete = st.form_submit_button("🗑️ 刪除此紀錄")
-                    
-                    if btn_update:
+                    if st.form_submit_button("🔨 執行修改"):
                         existing_df.at[edit_target, '日期'] = new_date.strip()
                         existing_df.at[edit_target, '標的'] = new_name.strip()
                         existing_df.at[edit_target, '代號'] = new_symbol.strip()
                         existing_df.at[edit_target, '盤前觀察'] = new_pre
                         existing_df.at[edit_target, '盤後紀錄'] = new_post
-                        conn.update(data=existing_df)
-                        st.cache_data.clear()
-                        st.rerun()
-                    elif btn_delete:
-                        existing_df = existing_df.drop(edit_target)
                         conn.update(data=existing_df)
                         st.cache_data.clear()
                         st.rerun()
@@ -259,7 +248,7 @@ with st.sidebar:
             active_h_del = existing_df[existing_df['盤後紀錄'] == "實單持倉中"]
             if not active_h_del.empty:
                 with st.form("del_buy_f"):
-                    st.info("⚠️ 僅用於刪除『輸入錯誤』的紀錄，若是正常獲利/停損了結，請使用下方『賣出結算』。")
+                    st.info("⚠️ 此處僅用於刪除『實單持倉中』的錯誤紀錄。")
                     del_sel = st.selectbox("選取要刪除的持倉", active_h_del.apply(lambda x: f"{x.name} | {x['日期']} - {x['標的']} (均價:{x['成本']:.2f})", axis=1))
                     if st.form_submit_button("🗑️ 確認刪除"):
                         idx_to_drop = int(del_sel.split(" | ")[0])
@@ -283,12 +272,12 @@ with st.sidebar:
                 sr_q = st.number_input(f"賣出股數 (真實持有: {curr_q})", min_value=1, max_value=safe_max_q, value=safe_max_q)
                 sr_n = st.text_input("出場筆記")
                 
+                # 💡 保證表單按鈕永遠存在，避免 Streamlit 報錯
                 submitted = st.form_submit_button("💰 結算獲利")
                 
                 if submitted:
                     if curr_q <= 0:
                         st.error(f"🚨 結算失敗！「{sn_sel}」的實際庫存為 0。請改用上方的『🗑️ 刪除誤植』將其清除。")
-                        st.form_submit_button("無法結算 (防當機機制)", disabled=True)
                     else:
                         idx = existing_df[(existing_df['日期']==sd_sel) & (existing_df['標的']==sn_sel)].index[0]
                         cp, q_orig = existing_df.at[idx, '成本'], existing_df.at[idx, '股數']
@@ -401,28 +390,38 @@ try:
             
             for d in sorted(completed['日期'].unique(), key=parse_date_for_sort, reverse=True):
                 with st.expander(f"🗓️ {d} 操盤戰報", expanded=(d == completed['日期'].max())):
-                    for _, r in completed[completed['日期'] == d].iterrows():
+                    for idx, r in completed[completed['日期'] == d].iterrows():
                         res_c = "#ef5350" if r['漲跌%'] > 0 else ("#26a69a" if r['漲跌%'] < 0 else "gray")
                         bg = "#ef5350" if "買進" in r['操作'] else "#bdbdbd"
                         
                         pre_text = format_list_text(r['盤前觀察'])
                         post_text = format_list_text(r['盤後紀錄'])
                         
-                        st.markdown(f"""
-                        <div style="border-left:6px solid {res_c}; padding:15px; background:white; margin-bottom:12px; border-radius:8px; border: 1px solid #eee;">
-                            <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                                <span style='background-color:{bg}; color:white; padding:2px 8px; border-radius:4px; font-size:0.8rem;'>{r['操作']}</span>
-                                <strong>{r['標的']}</strong>
-                                <span style="color:{res_c}; font-weight:bold;">{r['漲跌%']:.2f}%</span>
+                        col1, col2 = st.columns([0.85, 0.15])
+                        with col1:
+                            st.markdown(f"""
+                            <div style="border-left:6px solid {res_c}; padding:10px; background:white; border-radius:8px; border: 1px solid #eee;">
+                                <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                                    <span style='background-color:{bg}; color:white; padding:2px 8px; border-radius:4px; font-size:0.8rem;'>{r['操作']}</span>
+                                    <strong>{r['標的']}</strong>
+                                    <span style="color:{res_c}; font-weight:bold;">{r['漲跌%']:.2f}%</span>
+                                </div>
+                                <div style="background:#f8f9fa; padding:10px; border-radius:6px; margin-bottom:5px; font-size:0.95rem; text-align: justify; line-height: 1.6;">
+                                    🔍 <b>盤前：</b>{pre_text}
+                                </div>
+                                <div style="background:#fff; padding:10px; border-radius:6px; border:1px dashed #ddd; font-size:0.95rem; text-align: justify; line-height: 1.6;">
+                                    📝 <b>盤後：</b>{post_text}
+                                </div>
                             </div>
-                            <div style="background:#f8f9fa; padding:10px; border-radius:6px; margin-bottom:5px; font-size:0.95rem; text-align: justify; line-height: 1.6;">
-                                🔍 <b>盤前：</b>{pre_text}
-                            </div>
-                            <div style="background:#fff; padding:10px; border-radius:6px; border:1px dashed #ddd; font-size:0.95rem; text-align: justify; line-height: 1.6;">
-                                📝 <b>盤後：</b>{post_text}
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True)
+                            """, unsafe_allow_html=True)
+                        with col2:
+                            st.write("") 
+                            if st.button("🗑️", key=f"del_t2_{idx}", help="刪除此紀錄"):
+                                existing_df = existing_df.drop(idx)
+                                conn.update(data=existing_df)
+                                st.cache_data.clear()
+                                st.rerun()
+                        st.markdown("<div style='margin-bottom:12px;'></div>", unsafe_allow_html=True)
 
     with t3:
         if not completed.empty:
@@ -432,23 +431,33 @@ try:
                 t_df = t_df.sort_values(by='sort_date', ascending=False).drop(columns=['sort_date'])
                 
                 with st.expander(f"📌 {t} (紀錄：{len(t_df)} 筆)"):
-                    for _, row in t_df.iterrows():
+                    for idx, row in t_df.iterrows():
                         c = "#ef5350" if row['漲跌%'] > 0 else ("#26a69a" if row['漲跌%'] < 0 else "#bdbdbd")
                         
                         pre_text = format_list_text(row['盤前觀察'])
                         post_text = format_list_text(row['盤後紀錄'])
                         
-                        st.markdown(f"""
-                        <div style='border-left:5px solid {c}; padding:10px; background:#f8f9fa; margin-bottom:10px; border-radius:4px;'>
-                            <b>{row['日期']} | <span style='color:{c};'>{row['漲跌%']:.2f}%</span></b>
-                            <div style='margin-top:5px; font-size:0.9rem; text-align: justify; line-height: 1.6; color:#444;'>
-                                🔍 <b>盤前：</b>{pre_text}
+                        col1, col2 = st.columns([0.85, 0.15])
+                        with col1:
+                            st.markdown(f"""
+                            <div style='border-left:5px solid {c}; padding:10px; background:#f8f9fa; border-radius:4px;'>
+                                <b>{row['日期']} | <span style='color:{c};'>{row['漲跌%']:.2f}%</span></b>
+                                <div style='margin-top:5px; font-size:0.9rem; text-align: justify; line-height: 1.6; color:#444;'>
+                                    🔍 <b>盤前：</b>{pre_text}
+                                </div>
+                                <div style='margin-top:5px; font-size:0.9rem; text-align: justify; line-height: 1.6; color:#444;'>
+                                    📝 <b>盤後：</b>{post_text}
+                                </div>
                             </div>
-                            <div style='margin-top:5px; font-size:0.9rem; text-align: justify; line-height: 1.6; color:#444;'>
-                                📝 <b>盤後：</b>{post_text}
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True)
+                            """, unsafe_allow_html=True)
+                        with col2:
+                            st.write("")
+                            if st.button("🗑️", key=f"del_t3_{idx}", help="刪除此紀錄"):
+                                existing_df = existing_df.drop(idx)
+                                conn.update(data=existing_df)
+                                st.cache_data.clear()
+                                st.rerun()
+                        st.markdown("<div style='margin-bottom:10px;'></div>", unsafe_allow_html=True)
 
     st.divider()
     c_buy = completed[completed['操作'] == '買進']
