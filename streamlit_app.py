@@ -105,7 +105,15 @@ if '資料類型' not in existing_df.columns:
 if '預判結果' not in existing_df.columns:
     existing_df['預判結果'] = '⏳ 待驗證'
 
-existing_df['代號'] = existing_df['代號'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+# 💡 核心修復：強制將代號轉為字串，確保前導零不被吃掉，再把 .0 去掉
+def safe_symbol(val):
+    s = str(val).strip()
+    if s.endswith('.0'):
+        s = s[:-2]
+    # 如果 Google 試算表已經把 00935 變成 935，這裡只能針對字串處理，若要徹底預防，請確保 GSheet 欄位設為「純文字」
+    return s
+
+existing_df['代號'] = existing_df['代號'].apply(safe_symbol)
 existing_df['標的'] = existing_df['標的'].astype(str).str.strip()
 existing_df['盤後紀錄'] = existing_df['盤後紀錄'].astype(str).str.strip()
 
@@ -122,7 +130,7 @@ existing_df['日期'] = existing_df['日期'].astype(str).apply(clean_date_forma
 for col in ['成本', '股數', '投入金額', '賣出價', '實現損益', '漲跌%']:
     existing_df[col] = pd.to_numeric(existing_df[col], errors='coerce').fillna(0.0)
 
-# 全自動滅毒機制
+# 💡 全自動滅毒機制
 ghost_mask = (existing_df['盤後紀錄'] == '實單持倉中') & (existing_df['股數'] <= 0)
 if ghost_mask.any():
     existing_df.loc[ghost_mask, '盤後紀錄'] = '異常作廢(股數歸零)'
@@ -168,7 +176,8 @@ with st.sidebar:
             p_symbol = st.text_input("代號")
             p_pre = st.text_area("🔍 盤前觀點")
             if st.form_submit_button("🚀 發布"):
-                new_r = pd.DataFrame([{"日期": p_date, "標的": p_name.strip(), "代號": p_symbol.strip(), "操作": "買進" if "買進" in p_action else "觀察", "成本": 0.0, "股數": 0, "投入金額": 0.0, "漲跌%": 0.0, "盤前觀察": p_pre, "盤後紀錄": "⏳ 等待更新...", "賣出價": 0.0, "實現損益": 0.0, "資料類型": "戰報", "預判結果": "⏳ 待驗證"}])
+                # 確保輸入的代號當作文字存入
+                new_r = pd.DataFrame([{"日期": p_date, "標的": p_name.strip(), "代號": str(p_symbol).strip(), "操作": "買進" if "買進" in p_action else "觀察", "成本": 0.0, "股數": 0, "投入金額": 0.0, "漲跌%": 0.0, "盤前觀察": p_pre, "盤後紀錄": "⏳ 等待更新...", "賣出價": 0.0, "實現損益": 0.0, "資料類型": "戰報", "預判結果": "⏳ 待驗證"}])
                 conn.update(data=pd.concat([existing_df, new_r], ignore_index=True)); st.cache_data.clear(); st.rerun()
 
     with st.expander("✏️ 修正 / 刪除：戰報紀錄"):
@@ -201,7 +210,7 @@ with st.sidebar:
                 if btn_update:
                     existing_df.at[edit_target, '日期'] = new_date.strip()
                     existing_df.at[edit_target, '標的'] = new_name.strip()
-                    existing_df.at[edit_target, '代號'] = new_symbol.strip()
+                    existing_df.at[edit_target, '代號'] = str(new_symbol).strip() # 強制存文字
                     existing_df.at[edit_target, '盤前觀察'] = new_pre
                     existing_df.at[edit_target, '盤後紀錄'] = new_post
                     conn.update(data=existing_df)
@@ -246,7 +255,7 @@ with st.sidebar:
                 br_p = st.number_input("均價", min_value=0.0); br_q = st.number_input("股數", min_value=1, value=100)
                 if st.form_submit_button("✅ 加入持倉"):
                     br_n = br_n.strip()
-                    br_s = br_s.strip()
+                    br_s = str(br_s).strip() # 強制存文字
                     clean_br_date = f"{br_date.month}/{br_date.day}"
                     
                     match_cond = (existing_df['資料類型'] == '庫存') & (existing_df['盤後紀錄'] == "實單持倉中") & ((existing_df['標的'] == br_n) | ((existing_df['代號'] == br_s) & (br_s != "")))
@@ -390,7 +399,6 @@ try:
                         res_c = "#ef5350" if r['漲跌%'] > 0 else ("#26a69a" if r['漲跌%'] < 0 else "gray")
                         bg = "#ef5350" if "買進" in r['操作'] else "#bdbdbd"
                         
-                        # 💡 確保排版完全不變，隱藏預判結果的文字標籤
                         st.markdown(f"""
                         <div style="border-left:6px solid {res_c}; padding:15px; background:white; margin-bottom:12px; border-radius:8px; border: 1px solid #eee;">
                             <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
@@ -421,7 +429,6 @@ try:
                     for idx, row in t_df.iterrows():
                         c = "#ef5350" if row['漲跌%'] > 0 else ("#26a69a" if row['漲跌%'] < 0 else "#bdbdbd")
                         
-                        # 💡 同樣隱藏預判結果的文字標籤
                         st.markdown(f"""
                         <div style='border-left:5px solid {c}; padding:10px; background:#f8f9fa; margin-bottom:10px; border-radius:4px;'>
                             <div style="display:flex; justify-content:space-between; align-items:center;">
