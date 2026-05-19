@@ -105,12 +105,14 @@ if '資料類型' not in existing_df.columns:
 if '預判結果' not in existing_df.columns:
     existing_df['預判結果'] = '⏳ 待驗證'
 
-# 💡 核心修復：強制將代號轉為字串，確保前導零不被吃掉，再把 .0 去掉
+# 💡 核心修復：強制把消失的 00 補回來
 def safe_symbol(val):
     s = str(val).strip()
     if s.endswith('.0'):
         s = s[:-2]
-    # 如果 Google 試算表已經把 00935 變成 935，這裡只能針對字串處理，若要徹底預防，請確保 GSheet 欄位設為「純文字」
+    # Google 表單會把 00935 存成 935，這裡自動攔截補齊 (台灣ETF專用防呆)
+    if s.isdigit() and len(s) <= 3:
+        s = '00' + s
     return s
 
 existing_df['代號'] = existing_df['代號'].apply(safe_symbol)
@@ -176,7 +178,6 @@ with st.sidebar:
             p_symbol = st.text_input("代號")
             p_pre = st.text_area("🔍 盤前觀點")
             if st.form_submit_button("🚀 發布"):
-                # 確保輸入的代號當作文字存入
                 new_r = pd.DataFrame([{"日期": p_date, "標的": p_name.strip(), "代號": str(p_symbol).strip(), "操作": "買進" if "買進" in p_action else "觀察", "成本": 0.0, "股數": 0, "投入金額": 0.0, "漲跌%": 0.0, "盤前觀察": p_pre, "盤後紀錄": "⏳ 等待更新...", "賣出價": 0.0, "實現損益": 0.0, "資料類型": "戰報", "預判結果": "⏳ 待驗證"}])
                 conn.update(data=pd.concat([existing_df, new_r], ignore_index=True)); st.cache_data.clear(); st.rerun()
 
@@ -210,7 +211,7 @@ with st.sidebar:
                 if btn_update:
                     existing_df.at[edit_target, '日期'] = new_date.strip()
                     existing_df.at[edit_target, '標的'] = new_name.strip()
-                    existing_df.at[edit_target, '代號'] = str(new_symbol).strip() # 強制存文字
+                    existing_df.at[edit_target, '代號'] = str(new_symbol).strip() 
                     existing_df.at[edit_target, '盤前觀察'] = new_pre
                     existing_df.at[edit_target, '盤後紀錄'] = new_post
                     conn.update(data=existing_df)
@@ -255,7 +256,7 @@ with st.sidebar:
                 br_p = st.number_input("均價", min_value=0.0); br_q = st.number_input("股數", min_value=1, value=100)
                 if st.form_submit_button("✅ 加入持倉"):
                     br_n = br_n.strip()
-                    br_s = str(br_s).strip() # 強制存文字
+                    br_s = str(br_s).strip() 
                     clean_br_date = f"{br_date.month}/{br_date.day}"
                     
                     match_cond = (existing_df['資料類型'] == '庫存') & (existing_df['盤後紀錄'] == "實單持倉中") & ((existing_df['標的'] == br_n) | ((existing_df['代號'] == br_s) & (br_s != "")))
@@ -378,7 +379,9 @@ try:
     
     with t1:
         if active_holdings:
+            # 💡 確保實單持股只顯示表格，且代號強制轉為文字格式顯示
             st.dataframe(pd.DataFrame(active_holdings), use_container_width=True, hide_index=True, column_config={
+                "代號": st.column_config.TextColumn("代號"),
                 "現價": st.column_config.NumberColumn(format="%.2f"),
                 "均價": st.column_config.NumberColumn(format="%.2f"),
                 "損益金額": st.column_config.NumberColumn(format="%.0f"),
