@@ -192,6 +192,9 @@ with st.sidebar:
             curr_date = existing_df.at[edit_target, '日期']
             curr_name = existing_df.at[edit_target, '標的']
             curr_symbol = existing_df.at[edit_target, '代號']
+            curr_pct = float(existing_df.at[edit_target, '漲跌%'])
+            curr_action = existing_df.at[edit_target, '操作']
+            curr_pred = existing_df.at[edit_target, '預判結果']
             curr_pre = existing_df.at[edit_target, '盤前觀察']
             curr_post = existing_df.at[edit_target, '盤後紀錄']
             
@@ -199,19 +202,34 @@ with st.sidebar:
                 new_date = st.text_input("修正日期", value=curr_date)
                 new_name = st.text_input("修正標的名稱", value=curr_name)
                 new_symbol = st.text_input("修正代號", value=curr_symbol)
+                
+                # 💡 新增：操作、漲跌%、預判結果 的完整修正欄位
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    new_action = st.selectbox("修正操作", ["買進", "觀察"], index=0 if curr_action == "買進" else 1)
+                with c2:
+                    new_pct = st.number_input("修正漲跌 %", value=curr_pct, step=0.01, format="%.2f")
+                with c3:
+                    pred_opts = ["✅ 命中", "❌ 失誤", "⏳ 待驗證"]
+                    safe_pred = curr_pred if curr_pred in pred_opts else "⏳ 待驗證"
+                    new_pred = st.selectbox("修正預判", pred_opts, index=pred_opts.index(safe_pred))
+
                 new_pre = st.text_area("修正盤前觀點", value=curr_pre, height=100)
                 new_post = st.text_area("修正盤後紀錄", value=curr_post, height=100)
                 
-                col1, col2 = st.columns(2)
-                with col1:
+                b1, b2 = st.columns(2)
+                with b1:
                     btn_update = st.form_submit_button("🔨 執行修改")
-                with col2:
+                with b2:
                     btn_delete = st.form_submit_button("🗑️ 刪除此紀錄")
                 
                 if btn_update:
                     existing_df.at[edit_target, '日期'] = new_date.strip()
                     existing_df.at[edit_target, '標的'] = new_name.strip()
                     existing_df.at[edit_target, '代號'] = str(new_symbol).strip() 
+                    existing_df.at[edit_target, '操作'] = new_action
+                    existing_df.at[edit_target, '漲跌%'] = float(new_pct)
+                    existing_df.at[edit_target, '預判結果'] = new_pred
                     existing_df.at[edit_target, '盤前觀察'] = new_pre
                     existing_df.at[edit_target, '盤後紀錄'] = new_post
                     conn.update(data=existing_df)
@@ -379,7 +397,6 @@ try:
     
     with t1:
         if active_holdings:
-            # 💡 確保實單持股只顯示表格，且代號強制轉為文字格式顯示
             st.dataframe(pd.DataFrame(active_holdings), use_container_width=True, hide_index=True, column_config={
                 "代號": st.column_config.TextColumn("代號"),
                 "現價": st.column_config.NumberColumn(format="%.2f"),
