@@ -410,74 +410,34 @@ try:
     
     with t2:
         if not war_reports.empty:
-            # 💡 核心升級：解析日期以獲取年份與月份
-            def parse_date_for_grouping(d_str):
-                try:
-                    parts = str(d_str).split('/')
-                    if len(parts) == 2:
-                        return datetime(date.today().year, int(parts[0]), int(parts[1]))
-                    elif len(parts) == 3:
-                        if len(parts[0]) == 4: # YYYY/MM/DD
-                            return datetime(int(parts[0]), int(parts[1]), int(parts[2]))
-                except: pass
-                return datetime.min
-
-            war_reports['sort_dt'] = war_reports['日期'].apply(parse_date_for_grouping)
-            war_reports = war_reports.sort_values(by='sort_dt', ascending=False)
-            
-            def get_ym_str(dt):
-                if dt == datetime.min: return "早期紀錄"
-                return f"{dt.year}年{dt.month}月"
-            
-            war_reports['ym_label'] = war_reports['sort_dt'].apply(get_ym_str)
-
-            # 以 年-月 為主要折疊選單
-            for ym in war_reports['ym_label'].unique():
-                ym_df = war_reports[war_reports['ym_label'] == ym]
-                with st.expander(f"📁 {ym} 戰報總覽", expanded=(ym == war_reports['ym_label'].iloc[0])):
-                    
-                    first_day = ym_df['日期'].unique()[0]
-                    # 每個月份內，再依照日期以 HTML <details> 分出內層折疊區塊
-                    for d in ym_df['日期'].unique():
-                        d_df = ym_df[ym_df['日期'] == d]
+            def parse_date_for_sort(d_str):
+                try: return datetime.strptime(d_str, "%m/%d")
+                except: return datetime.min
+            for d in sorted(war_reports['日期'].unique(), key=parse_date_for_sort, reverse=True):
+                with st.expander(f"🗓️ {d} 操盤戰報", expanded=(d == war_reports['日期'].max())):
+                    for idx, r in war_reports[war_reports['日期'] == d].iterrows():
+                        res_c = "#ef5350" if r['漲跌%'] > 0 else ("#26a69a" if r['漲跌%'] < 0 else "gray")
+                        bg = "#ef5350" if "買進" in r['操作'] else "#bdbdbd"
                         
-                        # 自動展開該月份中「最新的一天」
-                        is_open = "open" if d == first_day else ""
-                        
-                        day_html = f"""
-                        <details {is_open} style="margin-bottom: 12px; border: 1px solid #e2e8f0; border-radius: 8px; background-color: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
-                            <summary style="padding: 12px 15px; font-weight: bold; color: #334155; cursor: pointer; background-color: #f8f9fa; border-radius: 8px; outline: none; user-select: none;">
-                                🗓️ {d} 操盤戰報 <span style="font-size: 0.85rem; color: #64748b; font-weight: normal; margin-left: 5px;">(共 {len(d_df)} 筆)</span>
-                            </summary>
-                            <div style="padding: 15px 15px 5px 15px;">
-                        """
-                        
-                        for idx, r in d_df.iterrows():
-                            res_c = "#ef5350" if r['漲跌%'] > 0 else ("#26a69a" if r['漲跌%'] < 0 else "gray")
-                            bg = "#ef5350" if "買進" in r['操作'] else "#bdbdbd"
-                            
-                            day_html += f"""
-                            <div style="border-left:6px solid {res_c}; padding:15px; background:white; margin-bottom:12px; border-radius:8px; border: 1px solid #eee;">
-                                <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                                    <div>
-                                        <span style='background-color:{bg}; color:white; padding:2px 8px; border-radius:4px; font-size:0.8rem;'>{r['操作']}</span>
-                                        <strong style="margin-left:5px;">{r['標的']}</strong>
-                                    </div>
-                                    <div>
-                                        <span style="color:{res_c}; font-weight:bold;">{r['漲跌%']:.2f}%</span>
-                                    </div>
+                        st.markdown(f"""
+                        <div style="border-left:6px solid {res_c}; padding:15px; background:white; margin-bottom:12px; border-radius:8px; border: 1px solid #eee;">
+                            <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                                <div>
+                                    <span style='background-color:{bg}; color:white; padding:2px 8px; border-radius:4px; font-size:0.8rem;'>{r['操作']}</span>
+                                    <strong style="margin-left:5px;">{r['標的']}</strong>
                                 </div>
-                                <div style="background:#f8f9fa; padding:10px; border-radius:6px; margin-bottom:5px; font-size:0.95rem; text-align: justify; line-height: 1.6;">
-                                    🔍 <b>盤前：</b>{format_list_text(r['盤前觀察'])}
-                                </div>
-                                <div style="background:#fff; padding:10px; border-radius:6px; border:1px dashed #ddd; font-size:0.95rem; text-align: justify; line-height: 1.6;">
-                                    📝 <b>盤後：</b>{format_list_text(r['盤後紀錄'])}
+                                <div>
+                                    <span style="color:{res_c}; font-weight:bold;">{r['漲跌%']:.2f}%</span>
                                 </div>
                             </div>
-                            """
-                            
-                        day_html += "</div></details>"
-                        st.markdown(day_html, unsafe_allow_html=True)
+                            <div style="background:#f8f9fa; padding:10px; border-radius:6px; margin-bottom:5px; font-size:0.95rem; text-align: justify; line-height: 1.6;">
+                                🔍 <b>盤前：</b>{format_list_text(r['盤前觀察'])}
+                            </div>
+                            <div style="background:#fff; padding:10px; border-radius:6px; border:1px dashed #ddd; font-size:0.95rem; text-align: justify; line-height: 1.6;">
+                                📝 <b>盤後：</b>{format_list_text(r['盤後紀錄'])}
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
 
     with t3:
         if not war_reports.empty:
