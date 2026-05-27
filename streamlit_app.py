@@ -436,22 +436,27 @@ try:
                 ym_df = war_reports[war_reports['ym_label'] == ym]
                 with st.expander(f"📁 {ym} 戰報總覽", expanded=(ym == war_reports['ym_label'].iloc[0])):
                     
-                    # 每個月份內，再依照日期分出視覺區塊
+                    first_day = ym_df['日期'].unique()[0]
+                    # 每個月份內，再依照日期以 HTML <details> 分出內層折疊區塊
                     for d in ym_df['日期'].unique():
                         d_df = ym_df[ym_df['日期'] == d]
                         
-                        # 日期標題條 (取代原本無法嵌套的 expander)
-                        st.markdown(f"""
-                        <div style='margin-top: 15px; margin-bottom: 10px; padding: 6px 12px; background-color: #f1f3f5; border-radius: 6px; font-weight: bold; color: #495057; border-left: 5px solid #adb5bd;'>
-                            🗓️ {d} 操盤戰報
-                        </div>
-                        """, unsafe_allow_html=True)
+                        # 自動展開該月份中「最新的一天」
+                        is_open = "open" if d == first_day else ""
+                        
+                        day_html = f"""
+                        <details {is_open} style="margin-bottom: 12px; border: 1px solid #e2e8f0; border-radius: 8px; background-color: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
+                            <summary style="padding: 12px 15px; font-weight: bold; color: #334155; cursor: pointer; background-color: #f8f9fa; border-radius: 8px; outline: none; user-select: none;">
+                                🗓️ {d} 操盤戰報 <span style="font-size: 0.85rem; color: #64748b; font-weight: normal; margin-left: 5px;">(共 {len(d_df)} 筆)</span>
+                            </summary>
+                            <div style="padding: 15px 15px 5px 15px;">
+                        """
                         
                         for idx, r in d_df.iterrows():
                             res_c = "#ef5350" if r['漲跌%'] > 0 else ("#26a69a" if r['漲跌%'] < 0 else "gray")
                             bg = "#ef5350" if "買進" in r['操作'] else "#bdbdbd"
                             
-                            st.markdown(f"""
+                            day_html += f"""
                             <div style="border-left:6px solid {res_c}; padding:15px; background:white; margin-bottom:12px; border-radius:8px; border: 1px solid #eee;">
                                 <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
                                     <div>
@@ -469,7 +474,10 @@ try:
                                     📝 <b>盤後：</b>{format_list_text(r['盤後紀錄'])}
                                 </div>
                             </div>
-                            """, unsafe_allow_html=True)
+                            """
+                            
+                        day_html += "</div></details>"
+                        st.markdown(day_html, unsafe_allow_html=True)
 
     with t3:
         if not war_reports.empty:
