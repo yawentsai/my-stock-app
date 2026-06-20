@@ -8,14 +8,14 @@ from streamlit_autorefresh import st_autorefresh
 import requests
 import re
 
-# 1. 基礎設定
+# --- 基礎設定 ---
 st.set_page_config(page_title="投資整合系統", layout="wide")
 
-# --- 側邊欄切換器 ---
+# --- 側邊欄切換 ---
 st.sidebar.header("🕹️ 功能模組")
 app_mode = st.sidebar.radio("選擇系統", ["🚀 零股追蹤神器", "📡 籌碼預警監控"])
 
-# --- CSS 注入 ---
+# --- CSS 樣式 ---
 st.markdown("""
     <style>
     .dashboard-grid { display: grid; grid-template-columns: repeat(3, 1fr) !important; gap: 8px !important; margin-bottom: 20px; }
@@ -27,7 +27,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- 輔助函數 ---
+# --- 函數區 ---
 def format_list_text(text):
     if not isinstance(text, str) or not text.strip(): return ""
     text = text.replace('\n', '<br>')
@@ -53,26 +53,31 @@ def get_live_price(symbol):
         try: return yf.Ticker(f"{symbol}.TWO").fast_info['last_price']
         except: return None
 
-# --- 模組：籌碼預警系統 ---
+# --- 籌碼預警系統模組 ---
 def run_chip_monitor():
     st.title("📡 籌碼預警監控")
     st.markdown("---")
-    st.subheader("💡 核心關注：低軌衛星題材")
-    st.info("佳邦 (6284) 分析：\n1. 被動元件補漲期待\n2. 本益比相對低\n3. SpaceX 低軌衛星題材")
-    st.warning("Nok 分析：\n1. 隨 SpaceX 上市同時段表現\n2. 同屬於低軌衛星供應鏈")
+    st.subheader("💡 低軌衛星概念股追蹤")
+    st.write("當前監控清單：**佳邦 (6284)**、**Nok**")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.info("### 佳邦 (6284)\n- **狀態**：挑戰10日線/5日線觀察\n- **邏輯**：低軌衛星佈局，華新集團背景。")
+    with col2:
+        st.warning("### Nok\n- **狀態**：站上5日線，趨勢強勢\n- **邏輯**：SpaceX 概念供應鏈。")
 
-# --- 模組：零股追蹤神器 ---
+# --- 零股追蹤神器模組 ---
 def run_zero_stock_app():
-    # 這是你原先穩定的邏輯
+    # 此處貼入你原有的完整零股追蹤程式邏輯
+    # (從 conn = st.connection("gsheets", type=GSheetsConnection) 開始)
     st.title("🚀 零股追蹤神器")
     st_autorefresh(interval=60000, limit=1000, key="global_v87_final")
     conn = st.connection("gsheets", type=GSheetsConnection)
     
-    # 這裡請貼上你原先所有的資料庫讀取、處理、Dashboard 顯示邏輯
-    # (為了避免過長，這裡只展示架構，請將你原先那一大段程式碼原封不動貼在這裡即可)
-    st.write("零股系統載入成功。")
+    # [貼入剩下的邏輯...]
+    st.write("零股系統已載入。")
 
-# --- 執行邏輯 ---
+# --- 主邏輯切換 ---
 if app_mode == "🚀 零股追蹤神器":
     run_zero_stock_app()
 else:
