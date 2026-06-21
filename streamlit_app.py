@@ -8,8 +8,131 @@ from streamlit_autorefresh import st_autorefresh
 import requests
 import re
 
-# 1. 基礎設定與手機版網格鎖定
-st.set_page_config(page_title="零股追蹤神器", layout="wide")
+# 1. 基礎設定與手機版網格鎖定 (系統共用)
+st.set_page_config(page_title="投資整合系統", layout="wide")
+
+# ==========================================
+# 🌟 系統切換開關 (完美隔離兩套系統)
+# ==========================================
+app_mode = st.sidebar.radio("切換系統", ["🚀 零股追蹤神器", "📡 籌碼預警監控 (爬蟲測試版)"])
+st.sidebar.markdown("---")
+
+# ==========================================
+# 📡 籌碼預警監控系統 (滿足你的 5 大需求)
+# ==========================================
+@st.cache_data(ttl=600)
+def scrape_yahoo_chip_data(symbol):
+    """測試爬取 Yahoo 股市的大戶與資券頁面"""
+    url_margin = f"https://tw.stock.yahoo.com/quote/{symbol}/margin"
+    url_inst = f"https://tw.stock.yahoo.com/quote/{symbol}/institutional-trading"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+    }
+    result = {"status": "測試中...", "margin": "等待抓取...", "big_holder": "等待抓取..."}
+    try:
+        # 測試 1: 資券變化網頁 (需求 5)
+        res_m = requests.get(url_margin, headers=headers, timeout=5)
+        if res_m.status_code == 200:
+            result["status"] = "🟢 Yahoo連線成功 (未被擋)"
+            result["margin"] = "✅ 成功抓取資券網頁 (可進一步解析融資券數據)" if "融資" in res_m.text else "⚠️ 網頁結構異常"
+        elif res_m.status_code == 403:
+            result["status"] = "🔴 遭到 Yahoo 防火牆 403 阻擋"
+            result["margin"] = "❌ 拒絕存取"
+            result["big_holder"] = "❌ 拒絕存取"
+            return result
+        else:
+            result["status"] = f"🟡 連線異常 (HTTP {res_m.status_code})"
+            
+        # 測試 2: 大戶散戶網頁 (需求 3)
+        res_i = requests.get(url_inst, headers=headers, timeout=5)
+        if res_i.status_code == 200:
+            result["big_holder"] = "✅ 成功抓取大戶網頁 (可進一步解析大戶持股比)" if "大戶" in res_i.text else "⚠️ 網頁結構異常"
+    except Exception as e:
+        result["status"] = f"🔴 爬蟲錯誤 ({str(e)})"
+    return result
+
+if app_mode == "📡 籌碼預警監控 (爬蟲測試版)":
+    st.title("📡 籌碼預警戰情室 (爬蟲驗證)")
+    st.info("此模組包含：1.自訂標的 2.量價監控 3.大戶散戶 4.到價提醒 5.融資借券。我們正在測試雲端爬蟲是否能突破 Yahoo 防線。")
+
+    # 初始化資料庫
+    if 'chip_db' not in st.session_state:
+        st.session_state['chip_db'] = pd.DataFrame(columns=['股票代號', '到價提醒'])
+
+    # 需求 1 & 4：自行輸入標的與到價提醒
+    with st.expander("➕ 新增追蹤標的", expanded=True):
+        c1, c2, c3 = st.columns([2, 2, 1])
+        with c1: 
+            new_sym = st.text_input("輸入股票代號 (如 2330, 6284)")
+        with c2: 
+            target_p = st.number_input("設定到價提醒 (目標價)", min_value=0.0, step=0.5)
+        with c3:
+            st.write(""); st.write("") # 排版對齊
+            if st.button("加入監控", use_container_width=True):
+                if new_sym:
+                    new_df = pd.DataFrame([{'股票代號': str(new_sym).strip(), '到價提醒': target_p}])
+                    st.session_state['chip_db'] = pd.concat([st.session_state['chip_db'], new_df], ignore_index=True)
+                    st.rerun()
+
+    # 顯示監控面板
+    if not st.session_state['chip_db'].empty:
+        st.divider()
+        for idx, row in st.session_state['chip_db'].iterrows():
+            sym = row['股票代號']
+            target = row['到價提醒']
+            
+            # --- 處理 yfinance (即時價量) ---
+            try:
+                hist = yf.Ticker(f"{sym}.TW").history(period="5d")
+                if hist.empty: hist = yf.Ticker(f"{sym}.TWO").history(period="5d")
+            except:
+                hist = pd.DataFrame()
+
+            if not hist.empty and len(hist) >= 3:
+                curr_price = hist['Close'].iloc[-1]
+                vol = hist['Volume'].values
+                
+                # 需求 2：判斷連續量增 / 量縮
+                if vol[-1] > vol[-2] > vol[-3]:
+                    vol_trend, vol_color = "📈 連續三日量增 (動能增強)", "#d32f2f"
+                elif vol[-1] < vol[-2] < vol[-3]:
+                    vol_trend, vol_color = "📉 連續三日量縮 (量縮整理)", "#388e3c"
+                else:
+                    vol_trend, vol_color = "➖ 量能無連續特徵 (震盪)", "#616161"
+
+                # 需求 4：判斷到價提醒
+                if target > 0 and curr_price >= target:
+                    alert_ui = f"<span style='color:white; background-color:#d32f2f; padding:3px 8px; border-radius:4px;'>🚨 已達目標價 ({target})</span>"
+                elif target > 0:
+                    alert_ui = f"<span style='color:#555;'>距目標價 {target} 還有 {(target - curr_price):.2f} 元</span>"
+                else:
+                    alert_ui = "<span style='color:#999;'>未設定目標價</span>"
+                    
+                # 需求 3 & 5：執行 Yahoo 爬蟲測試
+                chip_info = scrape_yahoo_chip_data(sym)
+
+                # 顯示綜合戰情卡片
+                st.markdown(f"""
+                <div style="background-color: #f8f9fa; border-left: 5px solid {vol_color}; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #ddd;">
+                    <div style="font-size: 1.3rem; font-weight: bold; margin-bottom: 8px;">代號：{sym} | 現價：{curr_price:.2f}</div>
+                    <div style="margin-bottom: 5px; font-size: 0.95rem;">📊 <b>量能監控：</b> <span style="color: {vol_color}; font-weight: bold;">{vol_trend}</span></div>
+                    <div style="margin-bottom: 12px; font-size: 0.95rem;">🔔 <b>提醒狀態：</b> {alert_ui}</div>
+                    <div style="padding: 10px; background-color: #fff; border-radius: 5px; border: 1px dashed #ccc;">
+                        <div style="font-size: 0.9rem; font-weight: bold; color: #1565c0; margin-bottom: 5px;">🤖 Yahoo 爬蟲連線測試：{chip_info['status']}</div>
+                        <div style="font-size: 0.85rem; color: #444;">👥 需求3 (大戶/散戶)：{chip_info['big_holder']}</div>
+                        <div style="font-size: 0.85rem; color: #444;">🏦 需求5 (融資/借券)：{chip_info['margin']}</div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.warning(f"代號 {sym} 無法取得資料。")
+
+    st.stop() # 🛑 關鍵指令：籌碼系統執行到此結束，絕對不會去干擾下方的零股系統。
+
+# ==========================================
+# 👇 以下為完全未更動的原版「零股追蹤神器」程式碼 👇
+# ==========================================
+
 st.title("🚀 零股追蹤神器")
 
 st.markdown("""
